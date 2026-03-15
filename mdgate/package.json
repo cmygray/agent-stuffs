@@ -1,0 +1,20 @@
+{
+  "name": "mdgate",
+  "version": "1.0.0",
+  "description": "Serve markdown files as mobile-friendly web pages over Tailscale",
+  "type": "module",
+  "bin": {
+    "mdgate": "./bin/mdgate.js"
+  },
+  "scripts": {
+    "test": "node --test test/"
+  },
+  "keywords": ["markdown", "server", "tailscale", "cli"],
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "marked": "^15.0.0",
+    "marked-highlight": "^2.2.0",
+    "highlight.js": "^11.11.0"
+  }
+}

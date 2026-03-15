@@ -7,3 +7,4 @@
 | Tool | Description |
 |------|-------------|
 | [zellij-pane-highlight](./zellij-pane-highlight/) | Zellij pane highlight plugin for Claude Code attention |
+| [orchestrator](./orchestrator/) | Claude Code CLI 기반 3단계 에이전트 오케스트레이션 (Worker → Verifier → Finalizer) |

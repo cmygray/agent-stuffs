@@ -1,0 +1,26 @@
+{
+  "type": "object",
+  "properties": {
+    "status": {
+      "type": "string",
+      "enum": ["done", "failed"]
+    },
+    "files_created": {
+      "type": "array",
+      "items": { "type": "string" }
+    },
+    "files_modified": {
+      "type": "array",
+      "items": { "type": "string" }
+    },
+    "decisions": {
+      "type": "array",
+      "items": { "type": "string" }
+    },
+    "issues": {
+      "type": "array",
+      "items": { "type": "string" }
+    }
+  },
+  "required": ["status", "files_created", "files_modified", "decisions", "issues"]
+}

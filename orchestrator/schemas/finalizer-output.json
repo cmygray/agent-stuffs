@@ -1,0 +1,19 @@
+{
+  "type": "object",
+  "properties": {
+    "status": {
+      "type": "string",
+      "enum": ["done", "failed"]
+    },
+    "commit_hash": {
+      "type": "string"
+    },
+    "branch_merged": {
+      "type": "string"
+    },
+    "commit_message": {
+      "type": "string"
+    }
+  },
+  "required": ["status", "commit_hash", "branch_merged", "commit_message"]
+}

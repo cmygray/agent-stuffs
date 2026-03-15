@@ -1,0 +1,24 @@
+{
+  "type": "object",
+  "properties": {
+    "status": {
+      "type": "string",
+      "enum": ["pass", "fail"]
+    },
+    "checks": {
+      "type": "object",
+      "properties": {
+        "tsc": { "type": "string", "enum": ["pass", "fail", "skip"] },
+        "lint": { "type": "string", "enum": ["pass", "fail", "skip"] },
+        "unit_test": { "type": "string", "enum": ["pass", "fail", "skip"] },
+        "e2e": { "type": "string", "enum": ["pass", "fail", "skip"] }
+      },
+      "required": ["tsc", "lint", "unit_test", "e2e"]
+    },
+    "errors": {
+      "type": "array",
+      "items": { "type": "string" }
+    }
+  },
+  "required": ["status", "checks", "errors"]
+}

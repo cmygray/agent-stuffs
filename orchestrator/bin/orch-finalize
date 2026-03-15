@@ -1,0 +1,133 @@
+#!/bin/bash
+set -euo pipefail
+
+# Usage: orch-finalize <unit-file>
+# Finalizer 에이전트를 실행하여 worktree의 변경사항을 커밋하고 main에 병합합니다.
+# 1) worktree에서 커밋 (에이전트)
+# 2) main으로 rebase (스크립트)
+# 3) ff-only merge (스크립트)
+# 4) worktree + 브랜치 정리 (스크립트)
+
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+source "${SCRIPT_DIR}/../lib/common.sh"
+source "${SCRIPT_DIR}/../lib/state.sh"
+
+UNIT_FILE="$1"
+UNIT_ID=$(unit_id "$UNIT_FILE")
+UNIT_NUM=$(unit_num "$UNIT_ID")
+SCHEMA="${ORCH_ROOT}/schemas/finalizer-output.json"
+UNIT_TITLE=$(unit_title "$UNIT_FILE")
+
+echo "=== Finalizer: ${UNIT_ID} ==="
+
+# worktree 경로 읽기
+WORKTREE_PATH=$(load_worktree_path "$UNIT_ID")
+
+if [ -z "$WORKTREE_PATH" ] || [ ! -d "$WORKTREE_PATH" ]; then
+  echo "ERROR: No worktree found for ${UNIT_ID}"
+  exit 1
+fi
+
+# 1. worktree 브랜치명 확인
+BRANCH=$(git -C "$WORKTREE_PATH" branch --show-current)
+echo "Branch: ${BRANCH}"
+
+# 2. worktree에서 커밋 (Finalizer 에이전트)
+FINALIZE_PROMPT=$(cat << PROMPT
+You are a finalizer agent. Do the following:
+
+Work inside the worktree directory: ${WORKTREE_PATH}
+cd to that directory before running any git commands.
+
+1. Check git status for uncommitted changes
+2. Stage all relevant changes (do not stage docs/plan/ files)
+3. Create a commit with this message format:
+   feat: ${UNIT_TITLE}
+
+   ## Changes
+   - (summarize the actual changes based on git diff --staged)
+
+   ## AI Context
+   - Agent: Claude (opus)
+   - Role: Worker agent implementing ${UNIT_ID}
+   - Key prompts:
+     - "Implement exactly what the spec says"
+
+   Co-Authored-By: Claude Opus <noreply@anthropic.com>
+
+Do NOT merge or switch branches. Only commit in the current worktree branch.
+Report the commit hash and branch name.
+PROMPT
+)
+
+RESULT=$(claude -p "$FINALIZE_PROMPT" \
+  --json-schema "$(cat "$SCHEMA")" \
+  --output-format json \
+  --model sonnet \
+  --dangerously-skip-permissions \
+  --append-system-prompt "You are a finalizer agent. Commit only. Do not merge, do not switch branches, do not modify source code.")
+
+RESULT_JSON=$(extract_structured_output "$RESULT" \
+  '{"status":"failed","commit_hash":"","branch_merged":"","commit_message":"No structured_output in response"}')
+
+COMMIT_STATUS=$(echo "$RESULT_JSON" | jq -r '.status')
+
+if [ "$COMMIT_STATUS" != "done" ]; then
+  echo "ERROR: Commit failed"
+  echo "$RESULT_JSON" | jq '.'
+  append_result_section "$UNIT_FILE" "Finalizer Output" "$RESULT_JSON"
+  update_plan_status "$UNIT_NUM" "[x]" "[!]"
+  exit 1
+fi
+
+# 3. rebase onto main
+echo "Rebasing ${BRANCH} onto main..."
+if ! git -C "$WORKTREE_PATH" rebase main; then
+  echo "ERROR: Rebase failed"
+  git -C "$WORKTREE_PATH" rebase --abort 2>/dev/null
+  exit 1
+fi
+
+# 4. ff-only merge
+echo "Merging ${BRANCH} into main (ff-only)..."
+if ! git merge "${BRANCH}" --ff-only; then
+  echo "ERROR: ff-only merge failed"
+  exit 1
+fi
+
+# 5. merge 검증
+COMMIT_HASH=$(echo "$RESULT_JSON" | jq -r '.commit_hash')
+if git log --oneline | grep -q "$(echo "$COMMIT_HASH" | cut -c1-7)" 2>/dev/null || git log --oneline -1 | grep -q "feat: ${UNIT_TITLE}"; then
+  echo "Merge verified."
+else
+  echo "WARNING: Merge verification uncertain. Keeping worktree as safety."
+  exit 1
+fi
+
+# 6. worktree + 브랜치 정리
+echo "Cleaning up worktree and branch..."
+git worktree remove "$WORKTREE_PATH" --force 2>/dev/null || rm -rf "$WORKTREE_PATH"
+git worktree prune
+git branch -d "${BRANCH}" 2>/dev/null || true
+
+# 7. 결과 기록
+FINAL_HASH=$(git log --oneline -1 | cut -d' ' -f1)
+RESULT_JSON=$(echo "$RESULT_JSON" | jq --arg h "$FINAL_HASH" --arg b "${BRANCH}" '.commit_hash = $h | .branch_merged = $b')
+append_result_section "$UNIT_FILE" "Finalizer Output" "$RESULT_JSON"
+
+# 8. state 파일 정리
+remove_worktree_state "$UNIT_ID"
+
+# 9. plan 문서 변경 커밋
+git add docs/plan/plan.md docs/plan/units/ 2>/dev/null
+if ! git diff --cached --quiet 2>/dev/null; then
+  git commit -m "docs: plan update — ${UNIT_ID} completed"
+  echo "Plan docs committed."
+fi
+
+# 10. 완료
+echo "=== ${UNIT_ID} finalize: done ==="
+echo "$RESULT_JSON" | jq '.'
+
+SESSION_ID=$(extract_session_id "$RESULT")
+echo "Session: ${SESSION_ID}"

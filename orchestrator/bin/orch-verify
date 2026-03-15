@@ -1,0 +1,79 @@
+#!/bin/bash
+set -euo pipefail
+
+# Usage: orch-verify <unit-file>
+# Verifier 에이전트를 실행하여 Unit의 구현 결과를 검증합니다.
+# worktree 디렉토리에서 검증 커맨드를 실행하고, 결과를 보고합니다.
+# 코드를 수정하지 않습니다.
+
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+source "${SCRIPT_DIR}/../lib/common.sh"
+source "${SCRIPT_DIR}/../lib/state.sh"
+
+UNIT_FILE="$1"
+UNIT_ID=$(unit_id "$UNIT_FILE")
+UNIT_NUM=$(unit_num "$UNIT_ID")
+SCHEMA="${ORCH_ROOT}/schemas/verifier-output.json"
+
+echo "=== Verifier: ${UNIT_ID} ==="
+
+# worktree 경로 읽기
+WORKTREE_PATH=$(load_worktree_path "$UNIT_ID")
+
+ADD_DIR_FLAG=""
+if [ -n "$WORKTREE_PATH" ] && [ -d "$WORKTREE_PATH" ]; then
+  ADD_DIR_FLAG="--add-dir ${WORKTREE_PATH}"
+  VERIFY_CONTEXT="Run all checks inside the worktree directory: ${WORKTREE_PATH}
+cd to that directory before running any commands."
+  echo "Worktree: ${WORKTREE_PATH}"
+else
+  VERIFY_CONTEXT="Run all checks in the current project directory."
+fi
+
+VERIFY_PROMPT=$(cat << PROMPT
+You are a verifier agent. The unit spec below contains a Verification table with checks.
+
+${VERIFY_CONTEXT}
+
+Before running any checks:
+- Install dependencies if needed (e.g., pnpm install, npm install).
+
+For each check:
+- If the criteria says "skip", report "skip"
+- Otherwise, run the exact command specified and report "pass" or "fail"
+- If a check fails, include the error output in the errors array
+
+Do not modify any code. Only run checks and report.
+PROMPT
+)
+
+RESULT=$(claude -p "${VERIFY_PROMPT}
+
+$(cat "$UNIT_FILE")" \
+  --json-schema "$(cat "$SCHEMA")" \
+  --output-format json \
+  --model sonnet \
+  --dangerously-skip-permissions \
+  ${ADD_DIR_FLAG} \
+  --append-system-prompt "You are a verifier agent. Run checks and report results only. Do not modify any code.")
+
+# structured_output 추출
+RESULT_JSON=$(extract_structured_output "$RESULT" \
+  '{"status":"fail","checks":{"tsc":"fail","lint":"fail","unit_test":"skip","e2e":"skip"},"errors":["No structured_output in response"]}')
+
+STATUS=$(echo "$RESULT_JSON" | jq -r '.status')
+
+# unit 파일에 결과 기록
+append_result_section "$UNIT_FILE" "Verify Output" "$RESULT_JSON"
+
+# plan.md 업데이트 (실패 시)
+if [ "$STATUS" = "fail" ]; then
+  update_plan_status "$UNIT_NUM" "[x]" "[!]"
+fi
+
+echo "=== ${UNIT_ID} verify: ${STATUS} ==="
+echo "$RESULT_JSON" | jq '.'
+
+# session ID 출력
+SESSION_ID=$(extract_session_id "$RESULT")
+echo "Session: ${SESSION_ID}"

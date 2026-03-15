@@ -1,0 +1,53 @@
+# Implementation Plan
+
+## Dispatch Pattern
+
+```bash
+# Worker
+claude -p "$(cat docs/plan/units/<unit>.md)" \
+  --json-schema "$(cat docs/plan/schemas/worker-output.json)" \
+  --output-format json --model opus --worktree \
+  --dangerously-skip-permissions \
+  --append-system-prompt "You are a worker agent. Implement exactly what the spec says. Do not ask questions."
+
+# Verifier
+claude -p "$(cat docs/plan/units/<unit>.md)" \
+  --json-schema "$(cat docs/plan/schemas/verifier-output.json)" \
+  --output-format json --model sonnet \
+  --dangerously-skip-permissions \
+  --append-system-prompt "You are a verifier agent. Run the checks specified. Report results only."
+
+# Finalizer
+claude -p "<commit instructions>" \
+  --json-schema "$(cat docs/plan/schemas/finalizer-output.json)" \
+  --output-format json --model sonnet \
+  --dangerously-skip-permissions \
+  --append-system-prompt "You are a finalizer agent. Commit and merge only. Do not modify code."
+```
+
+## Human-in-the-Loop Gates
+
+| Gate | When | Action |
+|------|------|--------|
+| G1 | Plan 승인 | 이 문서 검토 후 진행 |
+| G2 | Verify 실패 | 재시도 / 스펙 수정 / Unit 재분해 |
+| G3 | Finalizer 전 | 병합 승인 |
+| G4 | Plan 변경 | TOC 재구성 시 승인 |
+
+## Dependency Graph
+
+```
+(프로젝트에 맞게 작성)
+```
+
+## TOC
+
+| # | Unit | Scope | Deps | Status |
+|---|------|-------|------|--------|
+| 01 | (Unit 제목) | (범위) | - | [ ] |
+| 02 | (Unit 제목) | (범위) | 01 | [ ] |
+
+## Unit Documents
+
+- [Unit 01: (제목)](units/unit-01.md)
+- [Unit 02: (제목)](units/unit-02.md)

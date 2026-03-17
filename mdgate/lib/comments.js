@@ -27,6 +27,21 @@ export function addComment(mdAbsPath, { section, text }) {
   return entry;
 }
 
+export function updateComment(mdAbsPath, commentId, newText) {
+  const comments = loadComments(mdAbsPath);
+  const comment = comments.find((c) => c.id === commentId);
+  if (!comment) return null;
+  comment.text = newText;
+  comment.editedAt = new Date().toISOString();
+  writeFileSync(commentsPath(mdAbsPath), JSON.stringify(comments, null, 2) + "\n");
+  return comment;
+}
+
+export function clearComments(mdAbsPath) {
+  const p = commentsPath(mdAbsPath);
+  writeFileSync(p, "[]\n");
+}
+
 export function deleteComment(mdAbsPath, commentId) {
   const comments = loadComments(mdAbsPath);
   const filtered = comments.filter((c) => c.id !== commentId);

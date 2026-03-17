@@ -13,7 +13,8 @@ function buildBreadcrumb(mdPath) {
   return crumbs.join(' <span class="breadcrumb-sep">/</span> ');
 }
 
-export function htmlTemplate(title, contentHtml, mdPath) {
+export function htmlTemplate(title, contentHtml, mdPath, opts = {}) {
+  const { reviewMode = false } = opts;
   const breadcrumbHtml = buildBreadcrumb(mdPath);
   return `<!DOCTYPE html>
 <html lang="en">
@@ -235,6 +236,162 @@ export function htmlTemplate(title, contentHtml, mdPath) {
     padding: 0.2em;
   }
   .comment-delete:active { color: var(--comment-border); }
+  .comment-edit {
+    position: absolute;
+    top: 0.4em;
+    right: 2em;
+    background: none;
+    border: none;
+    color: var(--fg-dim);
+    cursor: pointer;
+    font-size: 0.75rem;
+    padding: 0.2em;
+  }
+  .comment-edit:active { color: var(--accent); }
+  .comment-item .comment-edit-form { display: none; margin-top: 0.4em; }
+  .comment-item .comment-edit-form.open { display: block; }
+  .comment-item .comment-edit-form textarea {
+    width: 100%;
+    min-height: 3em;
+    padding: 0.4em;
+    background: var(--bg);
+    color: var(--fg);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    font-family: inherit;
+    font-size: 0.85rem;
+    resize: vertical;
+  }
+  .comment-item .comment-edit-form textarea:focus { outline: 1px solid var(--accent); border-color: var(--accent); }
+  .comment-edited { color: var(--fg-dim); font-size: 0.7rem; font-style: italic; }
+
+  /* Toolbar */
+  .toolbar {
+    display: flex;
+    gap: 0.5em;
+    margin-bottom: 1em;
+    flex-wrap: wrap;
+  }
+  .toolbar-btn {
+    padding: 0.35em 0.8em;
+    background: var(--btn-bg);
+    color: var(--fg-dim);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    cursor: pointer;
+    font-size: 0.8rem;
+    -webkit-tap-highlight-color: transparent;
+  }
+  .toolbar-btn:active { background: var(--border); }
+  .toolbar-btn.active { color: var(--accent); border-color: var(--accent); }
+
+  /* Editor */
+  .editor-container { display: none; }
+  .editor-container.open { display: block; }
+  .editor-textarea {
+    width: 100%;
+    min-height: 60vh;
+    padding: 1em;
+    background: var(--code-bg);
+    color: var(--fg);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    font-family: "SF Mono", "Fira Code", "Cascadia Code", Menlo, monospace;
+    font-size: 0.9rem;
+    line-height: 1.6;
+    resize: vertical;
+    tab-size: 2;
+  }
+  .editor-textarea:focus { outline: 1px solid var(--accent); border-color: var(--accent); }
+  .editor-actions {
+    display: flex;
+    gap: 0.5em;
+    margin-top: 0.5em;
+    justify-content: flex-end;
+  }
+  .editor-save { padding: 0.4em 1em; background: var(--accent); color: var(--bg); border: none; border-radius: 4px; cursor: pointer; font-size: 0.85rem; }
+  .editor-cancel { padding: 0.4em 1em; background: var(--btn-bg); color: var(--fg-dim); border: none; border-radius: 4px; cursor: pointer; font-size: 0.85rem; }
+  .editor-status { color: var(--fg-dim); font-size: 0.8rem; padding: 0.4em 0; }
+
+  /* Review Panel */
+  .review-panel { display: none; }
+  .review-panel.open { display: block; margin-bottom: 2em; }
+  .review-panel-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 0.5em;
+    gap: 0.5em;
+  }
+  .review-panel-actions { display: flex; gap: 0.5em; align-items: center; }
+  .review-panel-title { font-size: 1rem; color: var(--accent); font-weight: 600; }
+  .review-panel-count { font-size: 0.8rem; color: var(--fg-dim); }
+  .review-item {
+    padding: 0.6em 0.75em;
+    margin: 0.3em 0;
+    background: var(--comment-bg);
+    border-left: 3px solid var(--comment-border);
+    border-radius: 0 4px 4px 0;
+    font-size: 0.85rem;
+  }
+  .review-item-section {
+    color: var(--accent);
+    font-size: 0.75rem;
+    font-weight: 600;
+    margin-bottom: 0.2em;
+    cursor: pointer;
+  }
+  .review-item-section:hover { text-decoration: underline; }
+  .review-item-text { white-space: pre-wrap; }
+  .review-item-meta {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-top: 0.3em;
+  }
+  .review-item-time { color: var(--fg-dim); font-size: 0.7rem; }
+  .clear-all-btn {
+    padding: 0.3em 0.7em;
+    background: none;
+    color: var(--comment-border);
+    border: 1px solid var(--comment-border);
+    border-radius: 4px;
+    font-size: 0.75rem;
+    cursor: pointer;
+    -webkit-tap-highlight-color: transparent;
+  }
+  .clear-all-btn:active { background: var(--comment-border); color: var(--bg); }
+  .clear-all-btn:disabled { opacity: 0.4; cursor: default; }
+
+  /* Submit Review */
+  .submit-review-bar {
+    position: fixed;
+    bottom: 0;
+    left: 0;
+    right: 0;
+    z-index: 20;
+    background: rgba(26, 27, 38, 0.95);
+    backdrop-filter: blur(8px);
+    -webkit-backdrop-filter: blur(8px);
+    border-top: 1px solid var(--border);
+    padding: 0.75em 1rem;
+    display: flex;
+    justify-content: center;
+    gap: 0.75em;
+    align-items: center;
+  }
+  .submit-review-btn {
+    padding: 0.5em 1.5em;
+    background: #9ece6a;
+    color: var(--bg);
+    border: none;
+    border-radius: 6px;
+    font-size: 0.95rem;
+    font-weight: 600;
+    cursor: pointer;
+  }
+  .submit-review-btn:active { opacity: 0.8; }
+  .submit-review-status { color: var(--fg-dim); font-size: 0.85rem; }
 
   /* Breadcrumb */
   .breadcrumb {
@@ -261,14 +418,44 @@ export function htmlTemplate(title, contentHtml, mdPath) {
 <div class="container">
   ${breadcrumbHtml ? `<nav class="breadcrumb">${breadcrumbHtml}</nav>` : ""}
   <div class="meta">${escapeHtml(title)}</div>
-  ${contentHtml}
+  <div class="toolbar">
+    <button class="toolbar-btn" id="editToggle">Edit</button>
+    <button class="toolbar-btn" id="reviewToggle">Comments</button>
+  </div>
+  <div class="review-panel" id="reviewPanel">
+    <div class="review-panel-header">
+      <span class="review-panel-title">All Comments</span>
+      <div class="review-panel-actions">
+        <span class="review-panel-count" id="reviewCount"></span>
+        <button class="clear-all-btn" id="clearAllBtn">Clear All</button>
+      </div>
+    </div>
+    <div id="reviewList"></div>
+  </div>
+  <div class="editor-container" id="editorContainer">
+    <textarea class="editor-textarea" id="editorTextarea" spellcheck="false"></textarea>
+    <div class="editor-actions">
+      <span class="editor-status" id="editorStatus"></span>
+      <button class="editor-cancel" id="editorCancel">Cancel</button>
+      <button class="editor-save" id="editorSave">Save (⌘S)</button>
+    </div>
+  </div>
+  <div id="contentView">${contentHtml}</div>
 </div>
+${reviewMode ? `<div class="submit-review-bar">
+  <span class="submit-review-status" id="reviewStatus">Add comments, then submit review</span>
+  <button class="submit-review-btn" id="submitReviewBtn">Submit Review</button>
+</div>` : ""}
 <script>
+const REVIEW_MODE = ${JSON.stringify(reviewMode)};
 const MD_PATH = ${JSON.stringify(mdPath)};
-const API = "/_api/comments/" + MD_PATH;
+const COMMENTS_API = "/_api/comments/" + MD_PATH;
+const CONTENT_API = "/_api/content/" + MD_PATH;
+
+let allComments = [];
 
 (async function init() {
-  const headings = document.querySelectorAll("h1, h2, h3");
+  const headings = document.querySelectorAll("#contentView h1, #contentView h2, #contentView h3");
   headings.forEach((h) => {
     const section = h.textContent.trim();
     h.dataset.section = section;
@@ -325,17 +512,21 @@ const API = "/_api/comments/" + MD_PATH;
   });
 
   await loadComments();
+  initEditor();
+  initReviewPanel();
+  initCheckboxes();
+  if (REVIEW_MODE) initSubmitReview();
 })();
 
 async function loadComments() {
   try {
-    const res = await fetch(API);
-    const comments = await res.json();
+    const res = await fetch(COMMENTS_API);
+    allComments = await res.json();
     document.querySelectorAll(".comment-list").forEach((l) => { l.textContent = ""; });
     document.querySelectorAll(".comment-btn").forEach((b) => b.classList.remove("has-comments"));
 
     const bySec = {};
-    comments.forEach((c) => {
+    allComments.forEach((c) => {
       (bySec[c.section] = bySec[c.section] || []).push(c);
     });
 
@@ -349,6 +540,8 @@ async function loadComments() {
       }
       items.forEach((c) => list.appendChild(renderComment(c)));
     }
+
+    renderReviewList();
   } catch {}
 }
 
@@ -364,20 +557,82 @@ function renderComment(c) {
   timeEl.className = "comment-time";
   const time = new Date(c.ts);
   timeEl.textContent = time.toLocaleDateString("ko-KR", { month:"short", day:"numeric", hour:"2-digit", minute:"2-digit" });
+  if (c.editedAt) {
+    const edited = document.createElement("span");
+    edited.className = "comment-edited";
+    edited.textContent = " (edited)";
+    timeEl.appendChild(edited);
+  }
+
+  const editBtn = document.createElement("button");
+  editBtn.className = "comment-edit";
+  editBtn.title = "Edit";
+  editBtn.textContent = "\\u270e";
+  editBtn.addEventListener("click", () => toggleEditForm(div, c));
 
   const delBtn = document.createElement("button");
   delBtn.className = "comment-delete";
   delBtn.title = "Delete";
   delBtn.textContent = "\\u00d7";
   delBtn.addEventListener("click", async () => {
-    await fetch(API + "?id=" + c.id, { method: "DELETE" });
+    await fetch(COMMENTS_API + "?id=" + c.id, { method: "DELETE" });
     await loadComments();
   });
 
+  const editForm = document.createElement("div");
+  editForm.className = "comment-edit-form";
+  const editTa = document.createElement("textarea");
+  editTa.value = c.text;
+  editTa.addEventListener("keydown", (e) => {
+    if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
+      e.preventDefault();
+      saveEdit(c.id, editTa, editForm);
+    }
+    if (e.key === "Escape") editForm.classList.remove("open");
+  });
+  const editActions = document.createElement("div");
+  editActions.className = "comment-form-actions";
+  const editCancelBtn = document.createElement("button");
+  editCancelBtn.className = "comment-cancel";
+  editCancelBtn.textContent = "Cancel";
+  editCancelBtn.addEventListener("click", () => editForm.classList.remove("open"));
+  const editSaveBtn = document.createElement("button");
+  editSaveBtn.className = "comment-submit";
+  editSaveBtn.textContent = "Save";
+  editSaveBtn.addEventListener("click", () => saveEdit(c.id, editTa, editForm));
+  editActions.appendChild(editCancelBtn);
+  editActions.appendChild(editSaveBtn);
+  editForm.appendChild(editTa);
+  editForm.appendChild(editActions);
+
   div.appendChild(textEl);
   div.appendChild(timeEl);
+  div.appendChild(editBtn);
   div.appendChild(delBtn);
+  div.appendChild(editForm);
   return div;
+}
+
+function toggleEditForm(div, c) {
+  const form = div.querySelector(".comment-edit-form");
+  const isOpen = form.classList.toggle("open");
+  if (isOpen) {
+    const ta = form.querySelector("textarea");
+    ta.value = c.text;
+    ta.focus();
+  }
+}
+
+async function saveEdit(id, ta, form) {
+  const text = ta.value.trim();
+  if (!text) return;
+  await fetch(COMMENTS_API, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ id, text }),
+  });
+  form.classList.remove("open");
+  await loadComments();
 }
 
 function toggleForm(h) {
@@ -400,7 +655,7 @@ async function submitComment(section, form) {
   const btn = form.querySelector(".comment-submit");
   btn.disabled = true;
   try {
-    await fetch(API, {
+    await fetch(COMMENTS_API, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ section, text }),
@@ -410,6 +665,196 @@ async function submitComment(section, form) {
   } finally {
     btn.disabled = false;
   }
+}
+
+/* --- Checkboxes --- */
+function initCheckboxes() {
+  const boxes = document.querySelectorAll('#contentView input[type="checkbox"]');
+  boxes.forEach((cb, idx) => {
+    cb.removeAttribute("disabled");
+    cb.style.cursor = "pointer";
+    cb.addEventListener("click", async (e) => {
+      const res = await fetch(CONTENT_API);
+      const { content } = await res.json();
+      let i = 0;
+      const updated = content.replace(/- \\[([ xX])\\]/g, (match, check) => {
+        if (i++ === idx) {
+          return cb.checked ? "- [x]" : "- [ ]";
+        }
+        return match;
+      });
+      await fetch(CONTENT_API, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ content: updated }),
+      });
+    });
+  });
+}
+
+/* --- Editor --- */
+function initEditor() {
+  const toggle = document.getElementById("editToggle");
+  const container = document.getElementById("editorContainer");
+  const contentView = document.getElementById("contentView");
+  const ta = document.getElementById("editorTextarea");
+  const saveBtn = document.getElementById("editorSave");
+  const cancelBtn = document.getElementById("editorCancel");
+  const status = document.getElementById("editorStatus");
+
+  toggle.addEventListener("click", async () => {
+    const opening = !container.classList.contains("open");
+    if (opening) {
+      status.textContent = "Loading...";
+      const res = await fetch(CONTENT_API);
+      const { content } = await res.json();
+      ta.value = content;
+      container.classList.add("open");
+      contentView.style.display = "none";
+      toggle.classList.add("active");
+      status.textContent = "";
+      ta.focus();
+    } else {
+      container.classList.remove("open");
+      contentView.style.display = "";
+      toggle.classList.remove("active");
+    }
+  });
+
+  cancelBtn.addEventListener("click", () => {
+    container.classList.remove("open");
+    contentView.style.display = "";
+    toggle.classList.remove("active");
+  });
+
+  saveBtn.addEventListener("click", () => saveContent(ta, status));
+
+  document.addEventListener("keydown", (e) => {
+    if (e.key === "s" && (e.metaKey || e.ctrlKey) && container.classList.contains("open")) {
+      e.preventDefault();
+      saveContent(ta, status);
+    }
+  });
+
+  // Tab key inserts spaces in editor
+  ta.addEventListener("keydown", (e) => {
+    if (e.key === "Tab") {
+      e.preventDefault();
+      const start = ta.selectionStart;
+      const end = ta.selectionEnd;
+      ta.value = ta.value.substring(0, start) + "  " + ta.value.substring(end);
+      ta.selectionStart = ta.selectionEnd = start + 2;
+    }
+  });
+}
+
+async function saveContent(ta, status) {
+  status.textContent = "Saving...";
+  try {
+    const res = await fetch(CONTENT_API, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ content: ta.value }),
+    });
+    if (res.ok) {
+      status.textContent = "Saved!";
+      setTimeout(() => { status.textContent = ""; }, 1500);
+      setTimeout(() => location.reload(), 500);
+    } else {
+      status.textContent = "Error saving";
+    }
+  } catch {
+    status.textContent = "Error saving";
+  }
+}
+
+/* --- Review Panel --- */
+function initReviewPanel() {
+  const toggle = document.getElementById("reviewToggle");
+  const panel = document.getElementById("reviewPanel");
+  const clearBtn = document.getElementById("clearAllBtn");
+
+  toggle.addEventListener("click", () => {
+    const opening = panel.classList.toggle("open");
+    toggle.classList.toggle("active", opening);
+    if (opening) renderReviewList();
+  });
+
+  clearBtn.addEventListener("click", async () => {
+    if (allComments.length === 0) return;
+    clearBtn.disabled = true;
+    clearBtn.textContent = "Clearing...";
+    await fetch(COMMENTS_API + "?id=_all", { method: "DELETE" });
+    await loadComments();
+    clearBtn.disabled = false;
+    clearBtn.textContent = "Clear All";
+  });
+}
+
+function renderReviewList() {
+  const list = document.getElementById("reviewList");
+  const count = document.getElementById("reviewCount");
+  if (!list) return;
+  list.textContent = "";
+  count.textContent = allComments.length + " comments";
+
+  if (allComments.length === 0) {
+    const empty = document.createElement("div");
+    empty.style.cssText = "color:var(--fg-dim);font-size:0.85rem;padding:0.5em 0;";
+    empty.textContent = "No comments yet.";
+    list.appendChild(empty);
+    return;
+  }
+
+  allComments.forEach((c) => {
+    const item = document.createElement("div");
+    item.className = "review-item";
+
+    const sec = document.createElement("div");
+    sec.className = "review-item-section";
+    sec.textContent = "\\u00a7 " + c.section;
+    sec.addEventListener("click", () => {
+      const heading = document.querySelector('#contentView [data-section="' + CSS.escape(c.section) + '"]');
+      if (heading) heading.scrollIntoView({ behavior: "smooth", block: "start" });
+    });
+
+    const text = document.createElement("div");
+    text.className = "review-item-text";
+    text.textContent = c.text;
+
+    const meta = document.createElement("div");
+    meta.className = "review-item-meta";
+    const time = document.createElement("span");
+    time.className = "review-item-time";
+    const d = new Date(c.ts);
+    time.textContent = d.toLocaleDateString("ko-KR", { month:"short", day:"numeric", hour:"2-digit", minute:"2-digit" });
+    if (c.editedAt) time.textContent += " (edited)";
+    meta.appendChild(time);
+
+    item.appendChild(sec);
+    item.appendChild(text);
+    item.appendChild(meta);
+    list.appendChild(item);
+  });
+}
+
+/* --- Submit Review --- */
+function initSubmitReview() {
+  const btn = document.getElementById("submitReviewBtn");
+  const status = document.getElementById("reviewStatus");
+  if (!btn) return;
+  btn.addEventListener("click", async () => {
+    btn.disabled = true;
+    status.textContent = "Submitting...";
+    try {
+      await fetch("/_api/submit-review", { method: "POST" });
+      status.textContent = "Review submitted! You can close this tab.";
+      btn.textContent = "Done";
+    } catch {
+      status.textContent = "Error submitting review";
+      btn.disabled = false;
+    }
+  });
 }
 </script>
 </body>

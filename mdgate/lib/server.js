@@ -5,7 +5,7 @@ import { Marked } from "marked";
 import { markedHighlight } from "marked-highlight";
 import hljs from "highlight.js";
 import { htmlTemplate } from "./template.js";
-import { loadComments, addComment, deleteComment } from "./comments.js";
+import { loadComments, addComment, updateComment, deleteComment, clearComments } from "./comments.js";
 
 const STATE_DIR = resolve(process.env.HOME || "/tmp", ".mdgate");
 
@@ -41,9 +41,14 @@ const MIME_TYPES = {
   ".yml": "text/yaml",
 };
 
-export function startServer(filePath, port, hosts = []) {
+export function startServer(filePath, port, hosts = [], opts = {}) {
+  const { reviewMode = false } = opts;
   const baseDir = dirname(resolve(filePath));
   const entryFile = basename(filePath);
+  let reviewResolve = null;
+  const reviewPromise = reviewMode
+    ? new Promise((resolve) => { reviewResolve = resolve; })
+    : null;
 
   const server = createServer((req, res) => {
     const clientIp = req.socket.remoteAddress || "";
@@ -68,6 +73,64 @@ export function startServer(filePath, port, hosts = []) {
     if (urlPath === "/health") {
       res.writeHead(200, { "Content-Type": "application/json" });
       res.end(JSON.stringify({ status: "ok" }));
+      return;
+    }
+
+    if (urlPath === "/_api/submit-review" && req.method === "POST" && reviewResolve) {
+      const mdAbs = resolve(baseDir, normalize(entryFile));
+      const comments = loadComments(mdAbs);
+      res.writeHead(200, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ ok: true }));
+      reviewResolve(comments);
+      return;
+    }
+
+    // Content API (markdown read/write)
+    if (urlPath.startsWith("/_api/content/")) {
+      const mdRel = urlPath.replace("/_api/content/", "");
+      const mdAbs = resolve(baseDir, normalize(mdRel));
+      if (!mdAbs.startsWith(baseDir) || !mdAbs.endsWith(".md")) {
+        res.writeHead(400, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ error: "invalid path" }));
+        return;
+      }
+
+      if (req.method === "GET") {
+        if (!existsSync(mdAbs)) {
+          res.writeHead(404, { "Content-Type": "application/json" });
+          res.end(JSON.stringify({ error: "not found" }));
+          return;
+        }
+        const content = readFileSync(mdAbs, "utf8");
+        res.writeHead(200, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ content }));
+        return;
+      }
+
+      if (req.method === "PUT") {
+        let body = "";
+        req.on("data", (c) => { body += c; });
+        req.on("end", () => {
+          try {
+            const { content } = JSON.parse(body);
+            if (content == null) {
+              res.writeHead(400, { "Content-Type": "application/json" });
+              res.end(JSON.stringify({ error: "content required" }));
+              return;
+            }
+            writeFileSync(mdAbs, content);
+            res.writeHead(200, { "Content-Type": "application/json" });
+            res.end(JSON.stringify({ ok: true }));
+          } catch {
+            res.writeHead(400, { "Content-Type": "application/json" });
+            res.end(JSON.stringify({ error: "invalid json" }));
+          }
+        });
+        return;
+      }
+
+      res.writeHead(405, { "Content-Type": "text/plain" });
+      res.end("Method not allowed");
       return;
     }
 
@@ -112,13 +175,49 @@ export function startServer(filePath, port, hosts = []) {
       if (req.method === "DELETE") {
         const url = new URL(req.url, "http://localhost");
         const id = url.searchParams.get("id");
-        if (id && deleteComment(mdAbs, id)) {
-          res.writeHead(200, { "Content-Type": "application/json" });
-          res.end(JSON.stringify({ ok: true }));
+        if (id) {
+          if (id === "_all") {
+            clearComments(mdAbs);
+            res.writeHead(200, { "Content-Type": "application/json" });
+            res.end(JSON.stringify({ ok: true }));
+          } else if (deleteComment(mdAbs, id)) {
+            res.writeHead(200, { "Content-Type": "application/json" });
+            res.end(JSON.stringify({ ok: true }));
+          } else {
+            res.writeHead(404, { "Content-Type": "application/json" });
+            res.end(JSON.stringify({ error: "not found" }));
+          }
         } else {
-          res.writeHead(404, { "Content-Type": "application/json" });
-          res.end(JSON.stringify({ error: "not found" }));
+          res.writeHead(400, { "Content-Type": "application/json" });
+          res.end(JSON.stringify({ error: "id required" }));
         }
+        return;
+      }
+
+      if (req.method === "PATCH") {
+        let body = "";
+        req.on("data", (c) => { body += c; });
+        req.on("end", () => {
+          try {
+            const { id, text } = JSON.parse(body);
+            if (!id || !text || !text.trim()) {
+              res.writeHead(400, { "Content-Type": "application/json" });
+              res.end(JSON.stringify({ error: "id and text required" }));
+              return;
+            }
+            const updated = updateComment(mdAbs, id, text.trim());
+            if (updated) {
+              res.writeHead(200, { "Content-Type": "application/json" });
+              res.end(JSON.stringify(updated));
+            } else {
+              res.writeHead(404, { "Content-Type": "application/json" });
+              res.end(JSON.stringify({ error: "not found" }));
+            }
+          } catch {
+            res.writeHead(400, { "Content-Type": "application/json" });
+            res.end(JSON.stringify({ error: "invalid json" }));
+          }
+        });
         return;
       }
 
@@ -148,7 +247,7 @@ export function startServer(filePath, port, hosts = []) {
 
     if (ext === ".md") {
       const relPath = reqFile;
-      const html = renderFile(absPath, relPath);
+      const html = renderFile(absPath, relPath, reviewMode);
       res.writeHead(200, {
         "Content-Type": "text/html; charset=utf-8",
         "Cache-Control": "no-cache",
@@ -177,15 +276,16 @@ export function startServer(filePath, port, hosts = []) {
     mkdirSync(STATE_DIR, { recursive: true });
     writeFileSync(resolve(STATE_DIR, "server.pid"), String(process.pid));
 
-    console.log(`mdgate serving: ${filePath}`);
-    console.log(`  Root dir:   ${baseDir}`);
-    console.log(`  Local:      http://localhost:${port}`);
+    const log = reviewMode ? console.error.bind(console) : console.log.bind(console);
+    log(`mdgate serving: ${filePath}`);
+    log(`  Root dir:   ${baseDir}`);
+    log(`  Local:      http://localhost:${port}`);
     if (hosts.length) {
       for (const h of hosts) {
-        console.log(`  Tailscale:  http://${h}:${port}`);
+        log(`  Tailscale:  http://${h}:${port}`);
       }
     }
-    console.log(`\nCtrl+C to stop.`);
+    log(reviewMode ? `\nWaiting for review submission...` : `\nCtrl+C to stop.`);
   });
 
   function cleanup() {
@@ -196,10 +296,12 @@ export function startServer(filePath, port, hosts = []) {
 
   process.on("SIGTERM", cleanup);
   process.on("SIGINT", cleanup);
+
+  return { server, reviewPromise };
 }
 
-function renderFile(filePath, relPath) {
+function renderFile(filePath, relPath, reviewMode = false) {
   const md = readFileSync(filePath, "utf8");
   const contentHtml = marked.parse(md);
-  return htmlTemplate(basename(filePath), contentHtml, relPath || basename(filePath));
+  return htmlTemplate(basename(filePath), contentHtml, relPath || basename(filePath), { reviewMode });
 }

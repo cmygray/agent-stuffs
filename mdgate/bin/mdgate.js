@@ -14,6 +14,7 @@ if (args.includes("--help") || args.includes("-h") || args.length === 0) {
 
 Usage:
   mdgate <file.md>                  Serve a markdown file
+  mdgate review <file.md>           Serve for review, block until submitted
   mdgate --init <host1> [host2...]  Set Tailscale hostnames
   mdgate --stop                     Stop the running server
   mdgate --status                   Check server status
@@ -80,15 +81,18 @@ if (args.includes("--status")) {
   process.exit(0);
 }
 
+const isReview = args[0] === "review";
+const effectiveArgs = isReview ? args.slice(1) : args;
+
 let port = config.port;
 let filePath = null;
 
-for (let i = 0; i < args.length; i++) {
-  if ((args[i] === "-p" || args[i] === "--port") && args[i + 1]) {
-    port = parseInt(args[i + 1], 10);
+for (let i = 0; i < effectiveArgs.length; i++) {
+  if ((effectiveArgs[i] === "-p" || effectiveArgs[i] === "--port") && effectiveArgs[i + 1]) {
+    port = parseInt(effectiveArgs[i + 1], 10);
     i++;
-  } else if (!args[i].startsWith("-")) {
-    filePath = resolve(args[i]);
+  } else if (!effectiveArgs[i].startsWith("-")) {
+    filePath = resolve(effectiveArgs[i]);
   }
 }
 
@@ -102,4 +106,13 @@ if (!existsSync(filePath)) {
   process.exit(1);
 }
 
-startServer(filePath, port, config.hosts);
+if (isReview) {
+  const { server, reviewPromise } = startServer(filePath, port, config.hosts, { reviewMode: true });
+  const comments = await reviewPromise;
+  // Output comments as structured feedback to stdout
+  console.log(JSON.stringify(comments, null, 2));
+  server.close();
+  process.exit(0);
+} else {
+  startServer(filePath, port, config.hosts);
+}

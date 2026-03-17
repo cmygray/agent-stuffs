@@ -50,6 +50,35 @@ Then open `http://<your-tailscale-host>:9483` from your mobile browser.
 
 Linked markdown files (e.g. `[Unit 01](units/unit-01.md)`) are navigable. Comments can be added per heading section via the `[+]` button.
 
+## ttstt Meeting Mode Integration
+
+Use with [ttstt](https://github.com/cmygray/ttstt)'s meeting mode (`ttstt-meeting`) to view live speech-to-text transcripts and AI-generated meeting notes on your phone. mdgate's 3-second auto-refresh detects file changes automatically.
+
+### Quick Start
+
+```bash
+# 1. Install ttstt
+git clone https://github.com/cmygray/ttstt.git
+cd ttstt && uv tool install -e .
+
+# 2. Start meeting recording (background)
+ttstt-meeting &
+
+# 3. Serve transcript via zrok public URL
+mdgate --share ~/ttstt-meetings/2026-03-17_140000.md
+```
+
+### Claude Code Slash Command
+
+The ttstt project includes a `/meeting-start` command (`.claude/commands/meeting-start.md`). Running it in Claude Code automatically starts ttstt-meeting and mdgate together, and generates live notes.
+
+```
+# In the ttstt project directory
+/meeting-start
+```
+
+> Gracefully skipped if mdgate is not in `PATH`.
+
 ## Security
 
 - Binds to `0.0.0.0` but rejects connections outside Tailscale CGNAT range and localhost

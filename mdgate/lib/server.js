@@ -36,6 +36,7 @@ const marked = new Marked(
 marked.setOptions({ gfm: true, breaks: true });
 
 const MIME_TYPES = {
+  ".html": "text/html",
   ".json": "application/json",
   ".txt": "text/plain",
   ".yaml": "text/yaml",

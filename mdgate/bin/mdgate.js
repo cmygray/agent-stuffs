@@ -2,6 +2,7 @@
 
 import { resolve, dirname, basename } from "node:path";
 import { existsSync, readFileSync, unlinkSync } from "node:fs";
+import { spawn } from "node:child_process";
 import { startServer } from "../lib/server.js";
 import { loadConfig, initConfig } from "../lib/config.js";
 import { clearRegistry } from "../lib/registry.js";
@@ -22,6 +23,7 @@ Usage:
 
 Options:
   -p, --port <port>        Port to listen on (default: ${config.port})
+  --share[=name]           Expose via zrok (optional fixed name)
   -h, --help               Show this help
 
 Config: ~/.mdgate/config.json`);
@@ -79,11 +81,18 @@ const effectiveArgs = isReview ? args.slice(1) : args;
 
 let port = config.port;
 let filePath = null;
+let shareName = null;
+let shareEnabled = false;
 
 for (let i = 0; i < effectiveArgs.length; i++) {
   if ((effectiveArgs[i] === "-p" || effectiveArgs[i] === "--port") && effectiveArgs[i + 1]) {
     port = parseInt(effectiveArgs[i + 1], 10);
     i++;
+  } else if (effectiveArgs[i] === "--share") {
+    shareEnabled = true;
+  } else if (effectiveArgs[i].startsWith("--share=")) {
+    shareEnabled = true;
+    shareName = effectiveArgs[i].replace("--share=", "");
   } else if (!effectiveArgs[i].startsWith("-")) {
     filePath = resolve(effectiveArgs[i]);
   }
@@ -140,4 +149,58 @@ if (isReview) {
 } else {
   // Start new server
   startServer(filePath, port, config.hosts);
+
+  if (shareEnabled) {
+    startZrok(port, shareName);
+  }
+}
+
+function startZrok(port, name) {
+  const args = ["share", "public", `http://localhost:${port}`, "--headless"];
+  if (name) {
+    args.push("--unique-name", name);
+  }
+
+  const zrok = spawn("zrok", args, { stdio: ["ignore", "pipe", "pipe"] });
+
+  let started = false;
+  zrok.stdout.on("data", (data) => {
+    const line = data.toString();
+    // zrok headless outputs JSON with the share URL
+    if (!started) {
+      try {
+        const info = JSON.parse(line);
+        if (info.frontend_endpoints) {
+          console.log(`\n  zrok:       ${info.frontend_endpoints[0]}`);
+          started = true;
+        }
+      } catch {
+        // Not JSON yet, try to extract URL
+        const urlMatch = line.match(/https?:\/\/[^\s]+\.zrok\.[^\s]+/);
+        if (urlMatch) {
+          console.log(`\n  zrok:       ${urlMatch[0]}`);
+          started = true;
+        }
+      }
+    }
+  });
+
+  zrok.stderr.on("data", (data) => {
+    const msg = data.toString().trim();
+    if (msg) console.error(`  zrok:       ${msg}`);
+  });
+
+  zrok.on("error", (err) => {
+    console.error(`  zrok error: ${err.message}`);
+  });
+
+  zrok.on("close", (code) => {
+    if (code !== 0 && code !== null) {
+      console.error(`  zrok exited with code ${code}`);
+    }
+  });
+
+  // Clean up zrok on process exit
+  process.on("SIGTERM", () => zrok.kill());
+  process.on("SIGINT", () => zrok.kill());
 }

@@ -857,6 +857,28 @@ function initSubmitReview() {
     }
   });
 }
+
+/* --- Auto Refresh --- */
+(function autoRefresh() {
+  let lastHash = null;
+  async function check() {
+    try {
+      const res = await fetch(CONTENT_API);
+      const { content } = await res.json();
+      const hash = content.length + ":" + content.slice(0, 200) + content.slice(-200);
+      if (lastHash === null) { lastHash = hash; return; }
+      if (hash !== lastHash) {
+        const scrollY = window.scrollY;
+        sessionStorage.setItem("mdgate-scroll", scrollY);
+        location.reload();
+      }
+    } catch {}
+  }
+  // Restore scroll position after reload
+  const saved = sessionStorage.getItem("mdgate-scroll");
+  if (saved) { window.scrollTo(0, parseInt(saved, 10)); sessionStorage.removeItem("mdgate-scroll"); }
+  setInterval(check, 3000);
+})();
 </script>
 </body>
 </html>`;

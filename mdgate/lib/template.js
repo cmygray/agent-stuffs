@@ -14,7 +14,7 @@ function buildBreadcrumb(mdPath) {
 }
 
 export function htmlTemplate(title, contentHtml, mdPath, opts = {}) {
-  const { reviewMode = false } = opts;
+  const { reviewMode = false, slug = "" } = opts;
   const breadcrumbHtml = buildBreadcrumb(mdPath);
   return `<!DOCTYPE html>
 <html lang="en">
@@ -449,8 +449,9 @@ ${reviewMode ? `<div class="submit-review-bar">
 <script>
 const REVIEW_MODE = ${JSON.stringify(reviewMode)};
 const MD_PATH = ${JSON.stringify(mdPath)};
-const COMMENTS_API = "/_api/comments/" + MD_PATH;
-const CONTENT_API = "/_api/content/" + MD_PATH;
+const SLUG = ${JSON.stringify(slug)};
+const COMMENTS_API = "/" + SLUG + "/_api/comments/" + MD_PATH;
+const CONTENT_API = "/" + SLUG + "/_api/content/" + MD_PATH;
 
 let allComments = [];
 
@@ -857,6 +858,67 @@ function initSubmitReview() {
   });
 }
 </script>
+</body>
+</html>`;
+}
+
+export function indexTemplate(entries) {
+  const items = entries.map((e) => {
+    const dir = escapeHtml(e.baseDir);
+    const slug = escapeHtml(e.slug);
+    const file = escapeHtml(e.entryFile);
+    const time = new Date(e.registeredAt).toLocaleString("ko-KR", { month:"short", day:"numeric", hour:"2-digit", minute:"2-digit" });
+    return `<a href="/${slug}/" class="doc-card">
+      <div class="doc-title">${file}</div>
+      <div class="doc-dir">${dir}</div>
+      <div class="doc-time">${time}</div>
+    </a>`;
+  }).join("\n");
+
+  return `<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=5">
+<title>mdgate</title>
+<style>
+  *, *::before, *::after { box-sizing: border-box; }
+  :root {
+    --bg: #1a1b26; --fg: #c0caf5; --fg-dim: #565f89;
+    --accent: #7aa2f7; --border: #292e42; --code-bg: #24283b;
+    --link: #7dcfff;
+  }
+  html { font-size: 16px; }
+  body {
+    margin: 0; padding: 1rem; background: var(--bg); color: var(--fg);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    line-height: 1.7;
+  }
+  .container { max-width: 48rem; margin: 0 auto; padding: 0.5rem 0 3rem; }
+  h1 { color: var(--accent); font-size: 1.4rem; margin-bottom: 0.3em; }
+  .subtitle { color: var(--fg-dim); font-size: 0.85rem; margin-bottom: 1.5em; }
+  .doc-list { display: flex; flex-direction: column; gap: 0.5em; }
+  .doc-card {
+    display: block; padding: 0.8em 1em;
+    background: var(--code-bg); border: 1px solid var(--border);
+    border-radius: 6px; text-decoration: none;
+    transition: border-color 0.15s;
+  }
+  .doc-card:hover { border-color: var(--accent); }
+  .doc-title { color: var(--link); font-size: 1rem; font-weight: 600; }
+  .doc-dir { color: var(--fg-dim); font-size: 0.8rem; margin-top: 0.2em; }
+  .doc-time { color: var(--fg-dim); font-size: 0.75rem; margin-top: 0.2em; }
+  .empty { color: var(--fg-dim); font-size: 0.9rem; padding: 2em 0; text-align: center; }
+</style>
+</head>
+<body>
+<div class="container">
+  <h1>mdgate</h1>
+  <div class="subtitle">${entries.length} document${entries.length !== 1 ? "s" : ""} registered</div>
+  <div class="doc-list">
+    ${entries.length > 0 ? items : '<div class="empty">No documents registered. Run mdgate &lt;file.md&gt; to add one.</div>'}
+  </div>
+</div>
 </body>
 </html>`;
 }

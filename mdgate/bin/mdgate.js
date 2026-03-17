@@ -1,9 +1,10 @@
 #!/usr/bin/env node
 
-import { resolve } from "node:path";
-import { existsSync } from "node:fs";
+import { resolve, dirname, basename } from "node:path";
+import { existsSync, readFileSync, unlinkSync } from "node:fs";
 import { startServer } from "../lib/server.js";
 import { loadConfig, initConfig } from "../lib/config.js";
+import { clearRegistry } from "../lib/registry.js";
 
 const args = process.argv.slice(2);
 
@@ -13,7 +14,7 @@ if (args.includes("--help") || args.includes("-h") || args.length === 0) {
   console.log(`mdgate — Serve markdown files as mobile-friendly web pages
 
 Usage:
-  mdgate <file.md>                  Serve a markdown file
+  mdgate <file.md>                  Serve / register a markdown file
   mdgate review <file.md>           Serve for review, block until submitted
   mdgate --init <host1> [host2...]  Set Tailscale hostnames
   mdgate --stop                     Stop the running server
@@ -38,20 +39,17 @@ if (args.includes("--init")) {
 }
 
 if (args.includes("--stop")) {
-  const pidFile = resolve(
-    process.env.HOME || "/tmp",
-    ".mdgate",
-    "server.pid",
-  );
+  const pidFile = resolve(process.env.HOME || "/tmp", ".mdgate", "server.pid");
   if (existsSync(pidFile)) {
-    const { readFileSync, unlinkSync } = await import("node:fs");
     const pid = parseInt(readFileSync(pidFile, "utf8").trim(), 10);
     try {
       process.kill(pid, "SIGTERM");
       unlinkSync(pidFile);
+      clearRegistry();
       console.log(`Stopped mdgate server (pid ${pid})`);
     } catch {
       unlinkSync(pidFile);
+      clearRegistry();
       console.log("Server was not running (stale pid file removed)");
     }
   } else {
@@ -61,13 +59,8 @@ if (args.includes("--stop")) {
 }
 
 if (args.includes("--status")) {
-  const pidFile = resolve(
-    process.env.HOME || "/tmp",
-    ".mdgate",
-    "server.pid",
-  );
+  const pidFile = resolve(process.env.HOME || "/tmp", ".mdgate", "server.pid");
   if (existsSync(pidFile)) {
-    const { readFileSync } = await import("node:fs");
     const pid = parseInt(readFileSync(pidFile, "utf8").trim(), 10);
     try {
       process.kill(pid, 0);
@@ -106,13 +99,45 @@ if (!existsSync(filePath)) {
   process.exit(1);
 }
 
+// Check if server is already running
+async function isServerRunning() {
+  try {
+    const res = await fetch(`http://localhost:${port}/health`);
+    const data = await res.json();
+    return data.status === "ok";
+  } catch {
+    return false;
+  }
+}
+
+async function registerWithRunningServer() {
+  const absFile = resolve(filePath);
+  const baseDir = dirname(absFile);
+  const res = await fetch(`http://localhost:${port}/_api/register`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ filePath: absFile, baseDir }),
+  });
+  const data = await res.json();
+  return data.slug;
+}
+
 if (isReview) {
   const { server, reviewPromise } = startServer(filePath, port, config.hosts, { reviewMode: true });
   const comments = await reviewPromise;
-  // Output comments as structured feedback to stdout
   console.log(JSON.stringify(comments, null, 2));
   server.close();
   process.exit(0);
+} else if (await isServerRunning()) {
+  // Server already running — just register the new doc
+  const slug = await registerWithRunningServer();
+  console.log(`Registered: http://localhost:${port}/${slug}/`);
+  if (config.hosts.length) {
+    for (const h of config.hosts) {
+      console.log(`            http://${h}:${port}/${slug}/`);
+    }
+  }
 } else {
+  // Start new server
   startServer(filePath, port, config.hosts);
 }

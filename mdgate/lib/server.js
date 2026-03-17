@@ -1,11 +1,12 @@
 import { createServer } from "node:http";
 import { readFileSync, existsSync, mkdirSync, writeFileSync, unlinkSync } from "node:fs";
-import { basename, resolve, dirname, extname, normalize, relative } from "node:path";
+import { basename, resolve, dirname, extname, normalize } from "node:path";
 import { Marked } from "marked";
 import { markedHighlight } from "marked-highlight";
 import hljs from "highlight.js";
-import { htmlTemplate } from "./template.js";
+import { htmlTemplate, indexTemplate } from "./template.js";
 import { loadComments, addComment, updateComment, deleteComment, clearComments } from "./comments.js";
+import { loadRegistry, addEntry, removeEntry } from "./registry.js";
 
 const STATE_DIR = resolve(process.env.HOME || "/tmp", ".mdgate");
 
@@ -41,13 +42,29 @@ const MIME_TYPES = {
   ".yml": "text/yaml",
 };
 
+function resolveDoc(urlPath) {
+  const entries = loadRegistry();
+  // Match /<slug>/... or /<slug>
+  const match = urlPath.match(/^\/([^/]+)(\/.*)?$/);
+  if (!match) return null;
+  const slug = match[1];
+  const rest = match[2] || "/";
+  const entry = entries.find((e) => e.slug === slug);
+  if (!entry) return null;
+  return { entry, rest };
+}
+
 export function startServer(filePath, port, hosts = [], opts = {}) {
   const { reviewMode = false } = opts;
-  const baseDir = dirname(resolve(filePath));
-  const entryFile = basename(filePath);
+
+  // Register first document
+  const absFile = resolve(filePath);
+  const baseDir = dirname(absFile);
+  const slug = addEntry(absFile, baseDir);
+
   let reviewResolve = null;
   const reviewPromise = reviewMode
-    ? new Promise((resolve) => { reviewResolve = resolve; })
+    ? new Promise((r) => { reviewResolve = r; })
     : null;
 
   const server = createServer((req, res) => {
@@ -76,8 +93,57 @@ export function startServer(filePath, port, hosts = [], opts = {}) {
       return;
     }
 
+    // Register API — add a new document
+    if (urlPath === "/_api/register" && req.method === "POST") {
+      let body = "";
+      req.on("data", (c) => { body += c; });
+      req.on("end", () => {
+        try {
+          const { filePath: fp, baseDir: bd } = JSON.parse(body);
+          if (!fp || !bd) {
+            res.writeHead(400, { "Content-Type": "application/json" });
+            res.end(JSON.stringify({ error: "filePath and baseDir required" }));
+            return;
+          }
+          const newSlug = addEntry(fp, bd);
+          res.writeHead(200, { "Content-Type": "application/json" });
+          res.end(JSON.stringify({ slug: newSlug }));
+        } catch {
+          res.writeHead(400, { "Content-Type": "application/json" });
+          res.end(JSON.stringify({ error: "invalid json" }));
+        }
+      });
+      return;
+    }
+
+    // Unregister API
+    if (urlPath === "/_api/unregister" && req.method === "POST") {
+      let body = "";
+      req.on("data", (c) => { body += c; });
+      req.on("end", () => {
+        try {
+          const { slug: s } = JSON.parse(body);
+          removeEntry(s);
+          res.writeHead(200, { "Content-Type": "application/json" });
+          res.end(JSON.stringify({ ok: true }));
+        } catch {
+          res.writeHead(400, { "Content-Type": "application/json" });
+          res.end(JSON.stringify({ error: "invalid json" }));
+        }
+      });
+      return;
+    }
+
+    // Registry list
+    if (urlPath === "/_api/registry" && req.method === "GET") {
+      res.writeHead(200, { "Content-Type": "application/json" });
+      res.end(JSON.stringify(loadRegistry()));
+      return;
+    }
+
+    // Submit review
     if (urlPath === "/_api/submit-review" && req.method === "POST" && reviewResolve) {
-      const mdAbs = resolve(baseDir, normalize(entryFile));
+      const mdAbs = resolve(baseDir, basename(absFile));
       const comments = loadComments(mdAbs);
       res.writeHead(200, { "Content-Type": "application/json" });
       res.end(JSON.stringify({ ok: true }));
@@ -85,153 +151,59 @@ export function startServer(filePath, port, hosts = [], opts = {}) {
       return;
     }
 
-    // Content API (markdown read/write)
-    if (urlPath.startsWith("/_api/content/")) {
-      const mdRel = urlPath.replace("/_api/content/", "");
-      const mdAbs = resolve(baseDir, normalize(mdRel));
-      if (!mdAbs.startsWith(baseDir) || !mdAbs.endsWith(".md")) {
+    // Index page
+    if (urlPath === "/") {
+      const entries = loadRegistry();
+      if (entries.length === 1) {
+        // Single doc: redirect to it
+        res.writeHead(302, { Location: `/${entries[0].slug}/` });
+        res.end();
+        return;
+      }
+      res.writeHead(200, { "Content-Type": "text/html; charset=utf-8", "Cache-Control": "no-cache" });
+      res.end(indexTemplate(entries));
+      return;
+    }
+
+    // Resolve document from URL
+    const doc = resolveDoc(urlPath);
+    if (!doc) {
+      res.writeHead(404, { "Content-Type": "text/plain" });
+      res.end("Not found");
+      return;
+    }
+
+    const { entry, rest } = doc;
+
+    // Scoped Content API: /<slug>/_api/content/<mdfile>
+    if (rest.startsWith("/_api/content/")) {
+      const mdRel = rest.replace("/_api/content/", "");
+      const mdAbs = resolve(entry.baseDir, normalize(mdRel));
+      if (!mdAbs.startsWith(entry.baseDir) || !mdAbs.endsWith(".md")) {
         res.writeHead(400, { "Content-Type": "application/json" });
         res.end(JSON.stringify({ error: "invalid path" }));
         return;
       }
-
-      if (req.method === "GET") {
-        if (!existsSync(mdAbs)) {
-          res.writeHead(404, { "Content-Type": "application/json" });
-          res.end(JSON.stringify({ error: "not found" }));
-          return;
-        }
-        const content = readFileSync(mdAbs, "utf8");
-        res.writeHead(200, { "Content-Type": "application/json" });
-        res.end(JSON.stringify({ content }));
-        return;
-      }
-
-      if (req.method === "PUT") {
-        let body = "";
-        req.on("data", (c) => { body += c; });
-        req.on("end", () => {
-          try {
-            const { content } = JSON.parse(body);
-            if (content == null) {
-              res.writeHead(400, { "Content-Type": "application/json" });
-              res.end(JSON.stringify({ error: "content required" }));
-              return;
-            }
-            writeFileSync(mdAbs, content);
-            res.writeHead(200, { "Content-Type": "application/json" });
-            res.end(JSON.stringify({ ok: true }));
-          } catch {
-            res.writeHead(400, { "Content-Type": "application/json" });
-            res.end(JSON.stringify({ error: "invalid json" }));
-          }
-        });
-        return;
-      }
-
-      res.writeHead(405, { "Content-Type": "text/plain" });
-      res.end("Method not allowed");
-      return;
+      return handleContentApi(req, res, mdAbs);
     }
 
-    // Comments API
-    if (urlPath.startsWith("/_api/comments/")) {
-      const mdRel = urlPath.replace("/_api/comments/", "");
-      const mdAbs = resolve(baseDir, normalize(mdRel));
-      if (!mdAbs.startsWith(baseDir) || !mdAbs.endsWith(".md")) {
+    // Scoped Comments API: /<slug>/_api/comments/<mdfile>
+    if (rest.startsWith("/_api/comments/")) {
+      const mdRel = rest.replace("/_api/comments/", "");
+      const mdAbs = resolve(entry.baseDir, normalize(mdRel));
+      if (!mdAbs.startsWith(entry.baseDir) || !mdAbs.endsWith(".md")) {
         res.writeHead(400, { "Content-Type": "application/json" });
         res.end(JSON.stringify({ error: "invalid path" }));
         return;
       }
-
-      if (req.method === "GET") {
-        res.writeHead(200, { "Content-Type": "application/json" });
-        res.end(JSON.stringify(loadComments(mdAbs)));
-        return;
-      }
-
-      if (req.method === "POST") {
-        let body = "";
-        req.on("data", (c) => { body += c; });
-        req.on("end", () => {
-          try {
-            const { section, text } = JSON.parse(body);
-            if (!text || !text.trim()) {
-              res.writeHead(400, { "Content-Type": "application/json" });
-              res.end(JSON.stringify({ error: "text required" }));
-              return;
-            }
-            const entry = addComment(mdAbs, { section: section || "", text: text.trim() });
-            res.writeHead(201, { "Content-Type": "application/json" });
-            res.end(JSON.stringify(entry));
-          } catch {
-            res.writeHead(400, { "Content-Type": "application/json" });
-            res.end(JSON.stringify({ error: "invalid json" }));
-          }
-        });
-        return;
-      }
-
-      if (req.method === "DELETE") {
-        const url = new URL(req.url, "http://localhost");
-        const id = url.searchParams.get("id");
-        if (id) {
-          if (id === "_all") {
-            clearComments(mdAbs);
-            res.writeHead(200, { "Content-Type": "application/json" });
-            res.end(JSON.stringify({ ok: true }));
-          } else if (deleteComment(mdAbs, id)) {
-            res.writeHead(200, { "Content-Type": "application/json" });
-            res.end(JSON.stringify({ ok: true }));
-          } else {
-            res.writeHead(404, { "Content-Type": "application/json" });
-            res.end(JSON.stringify({ error: "not found" }));
-          }
-        } else {
-          res.writeHead(400, { "Content-Type": "application/json" });
-          res.end(JSON.stringify({ error: "id required" }));
-        }
-        return;
-      }
-
-      if (req.method === "PATCH") {
-        let body = "";
-        req.on("data", (c) => { body += c; });
-        req.on("end", () => {
-          try {
-            const { id, text } = JSON.parse(body);
-            if (!id || !text || !text.trim()) {
-              res.writeHead(400, { "Content-Type": "application/json" });
-              res.end(JSON.stringify({ error: "id and text required" }));
-              return;
-            }
-            const updated = updateComment(mdAbs, id, text.trim());
-            if (updated) {
-              res.writeHead(200, { "Content-Type": "application/json" });
-              res.end(JSON.stringify(updated));
-            } else {
-              res.writeHead(404, { "Content-Type": "application/json" });
-              res.end(JSON.stringify({ error: "not found" }));
-            }
-          } catch {
-            res.writeHead(400, { "Content-Type": "application/json" });
-            res.end(JSON.stringify({ error: "invalid json" }));
-          }
-        });
-        return;
-      }
-
-      res.writeHead(405, { "Content-Type": "text/plain" });
-      res.end("Method not allowed");
-      return;
+      return handleCommentsApi(req, res, mdAbs);
     }
 
-    // Resolve requested file
-    const reqFile = urlPath === "/" ? entryFile : urlPath.replace(/^\//, "");
-    const absPath = resolve(baseDir, normalize(reqFile));
+    // Serve file
+    const reqFile = rest === "/" ? entry.entryFile : rest.replace(/^\//, "");
+    const absPath = resolve(entry.baseDir, normalize(reqFile));
 
-    // Path traversal guard: must stay within baseDir
-    if (!absPath.startsWith(baseDir)) {
+    if (!absPath.startsWith(entry.baseDir)) {
       res.writeHead(403, { "Content-Type": "text/plain" });
       res.end("Forbidden");
       return;
@@ -247,23 +219,16 @@ export function startServer(filePath, port, hosts = [], opts = {}) {
 
     if (ext === ".md") {
       const relPath = reqFile;
-      const html = renderFile(absPath, relPath, reviewMode);
-      res.writeHead(200, {
-        "Content-Type": "text/html; charset=utf-8",
-        "Cache-Control": "no-cache",
-      });
+      const html = renderFile(absPath, relPath, entry.slug, reviewMode);
+      res.writeHead(200, { "Content-Type": "text/html; charset=utf-8", "Cache-Control": "no-cache" });
       res.end(html);
       return;
     }
 
-    // Serve other allowed file types as-is
     const mime = MIME_TYPES[ext];
     if (mime) {
       const content = readFileSync(absPath, "utf8");
-      res.writeHead(200, {
-        "Content-Type": `${mime}; charset=utf-8`,
-        "Cache-Control": "no-cache",
-      });
+      res.writeHead(200, { "Content-Type": `${mime}; charset=utf-8`, "Cache-Control": "no-cache" });
       res.end(content);
       return;
     }
@@ -278,11 +243,11 @@ export function startServer(filePath, port, hosts = [], opts = {}) {
 
     const log = reviewMode ? console.error.bind(console) : console.log.bind(console);
     log(`mdgate serving: ${filePath}`);
-    log(`  Root dir:   ${baseDir}`);
-    log(`  Local:      http://localhost:${port}`);
+    log(`  Slug:       ${slug}`);
+    log(`  Local:      http://localhost:${port}/${slug}/`);
     if (hosts.length) {
       for (const h of hosts) {
-        log(`  Tailscale:  http://${h}:${port}`);
+        log(`  Tailscale:  http://${h}:${port}/${slug}/`);
       }
     }
     log(reviewMode ? `\nWaiting for review submission...` : `\nCtrl+C to stop.`);
@@ -290,6 +255,7 @@ export function startServer(filePath, port, hosts = [], opts = {}) {
 
   function cleanup() {
     try { unlinkSync(resolve(STATE_DIR, "server.pid")); } catch {}
+    removeEntry(slug);
     server.close();
     process.exit(0);
   }
@@ -300,8 +266,129 @@ export function startServer(filePath, port, hosts = [], opts = {}) {
   return { server, reviewPromise };
 }
 
-function renderFile(filePath, relPath, reviewMode = false) {
+function handleContentApi(req, res, mdAbs) {
+  if (req.method === "GET") {
+    if (!existsSync(mdAbs)) {
+      res.writeHead(404, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ error: "not found" }));
+      return;
+    }
+    const content = readFileSync(mdAbs, "utf8");
+    res.writeHead(200, { "Content-Type": "application/json" });
+    res.end(JSON.stringify({ content }));
+    return;
+  }
+
+  if (req.method === "PUT") {
+    let body = "";
+    req.on("data", (c) => { body += c; });
+    req.on("end", () => {
+      try {
+        const { content } = JSON.parse(body);
+        if (content == null) {
+          res.writeHead(400, { "Content-Type": "application/json" });
+          res.end(JSON.stringify({ error: "content required" }));
+          return;
+        }
+        writeFileSync(mdAbs, content);
+        res.writeHead(200, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ ok: true }));
+      } catch {
+        res.writeHead(400, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ error: "invalid json" }));
+      }
+    });
+    return;
+  }
+
+  res.writeHead(405, { "Content-Type": "text/plain" });
+  res.end("Method not allowed");
+}
+
+function handleCommentsApi(req, res, mdAbs) {
+  if (req.method === "GET") {
+    res.writeHead(200, { "Content-Type": "application/json" });
+    res.end(JSON.stringify(loadComments(mdAbs)));
+    return;
+  }
+
+  if (req.method === "POST") {
+    let body = "";
+    req.on("data", (c) => { body += c; });
+    req.on("end", () => {
+      try {
+        const { section, text } = JSON.parse(body);
+        if (!text || !text.trim()) {
+          res.writeHead(400, { "Content-Type": "application/json" });
+          res.end(JSON.stringify({ error: "text required" }));
+          return;
+        }
+        const entry = addComment(mdAbs, { section: section || "", text: text.trim() });
+        res.writeHead(201, { "Content-Type": "application/json" });
+        res.end(JSON.stringify(entry));
+      } catch {
+        res.writeHead(400, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ error: "invalid json" }));
+      }
+    });
+    return;
+  }
+
+  if (req.method === "DELETE") {
+    const url = new URL(req.url, "http://localhost");
+    const id = url.searchParams.get("id");
+    if (id) {
+      if (id === "_all") {
+        clearComments(mdAbs);
+        res.writeHead(200, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ ok: true }));
+      } else if (deleteComment(mdAbs, id)) {
+        res.writeHead(200, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ ok: true }));
+      } else {
+        res.writeHead(404, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ error: "not found" }));
+      }
+    } else {
+      res.writeHead(400, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ error: "id required" }));
+    }
+    return;
+  }
+
+  if (req.method === "PATCH") {
+    let body = "";
+    req.on("data", (c) => { body += c; });
+    req.on("end", () => {
+      try {
+        const { id, text } = JSON.parse(body);
+        if (!id || !text || !text.trim()) {
+          res.writeHead(400, { "Content-Type": "application/json" });
+          res.end(JSON.stringify({ error: "id and text required" }));
+          return;
+        }
+        const updated = updateComment(mdAbs, id, text.trim());
+        if (updated) {
+          res.writeHead(200, { "Content-Type": "application/json" });
+          res.end(JSON.stringify(updated));
+        } else {
+          res.writeHead(404, { "Content-Type": "application/json" });
+          res.end(JSON.stringify({ error: "not found" }));
+        }
+      } catch {
+        res.writeHead(400, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ error: "invalid json" }));
+      }
+    });
+    return;
+  }
+
+  res.writeHead(405, { "Content-Type": "text/plain" });
+  res.end("Method not allowed");
+}
+
+function renderFile(filePath, relPath, slug, reviewMode = false) {
   const md = readFileSync(filePath, "utf8");
   const contentHtml = marked.parse(md);
-  return htmlTemplate(basename(filePath), contentHtml, relPath || basename(filePath), { reviewMode });
+  return htmlTemplate(basename(filePath), contentHtml, relPath || basename(filePath), { reviewMode, slug });
 }

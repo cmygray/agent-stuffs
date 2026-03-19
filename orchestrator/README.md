@@ -173,7 +173,7 @@ Worker가 구현 중 내린 기술적 결정이 Unit별로 누적됩니다:
 
 ### worktree 경로
 
-Worker 실행 시 Claude Code CLI의 `--worktree` 플래그로 격리된 worktree가 생성됩니다. 스크립트는 실행 전후 `.claude/worktrees/` 디렉토리 스냅샷을 비교하여 새로 생성된 worktree를 탐지하고, 경로를 `.state/<unit-id>.worktree`에 저장합니다. Verifier와 Finalizer는 이 경로를 읽어 동일한 worktree에서 작업합니다.
+Worker 실행 전에 스크립트가 `git worktree add`로 직접 worktree를 생성합니다. base ref는 `origin/main` → `origin/master` → 로컬 `HEAD` 순서로 fallback합니다. 생성된 worktree 경로는 `.state/<unit-id>.worktree`에 저장되며, Verifier와 Finalizer는 이 경로를 읽어 동일한 worktree에서 작업합니다. worktree 기본 경로는 `WORKTREE_BASE` 환경변수로 변경할 수 있습니다.
 
 ## 에이전트 상세
 
@@ -260,10 +260,65 @@ Finalizer는 소스 코드를 수정하지 않습니다. 에이전트가 worktre
 
 ## 커스터마이징
 
+### 환경변수
+
+모든 설정은 `lib/common.sh`에 정의되며, 환경변수로 오버라이드할 수 있습니다:
+
+| 변수 | 기본값 | 설명 |
+|------|--------|------|
+| `PROJECT_ROOT` | `$(pwd)` | 프로젝트 루트 디렉토리 |
+| `PLAN_DIR` | `$PROJECT_ROOT/docs/plan` | plan 디렉토리 경로 |
+| `STATE_DIR` | `$PLAN_DIR/.state` | 런타임 상태 디렉토리 |
+| `PLAN_FILE` | `$PLAN_DIR/plan.md` | plan 문서 경로 |
+| `WORKTREE_BASE` | `.claude/worktrees` | worktree 생성 디렉토리 |
+| `WORKER_MODEL` | `opus` | Worker 에이전트 모델 |
+| `VERIFIER_MODEL` | `sonnet` | Verifier 에이전트 모델 |
+| `FINALIZER_MODEL` | `sonnet` | Finalizer 에이전트 모델 |
+
+```bash
+# 예: worktree를 /tmp에 생성하고 Worker를 sonnet으로 실행
+WORKTREE_BASE=/tmp/worktrees WORKER_MODEL=sonnet orch-worker docs/plan/units/unit-01.md
+```
+
+### 스크립트 수정
+
 | 항목 | 위치 | 방법 |
 |------|------|------|
 | 검증 항목 | `unit.md` Verification 테이블 | 프로젝트 체크 커맨드로 교체 |
 | 커밋 메시지 형식 | `orch-finalize` FINALIZE_PROMPT | 프롬프트 내 메시지 템플릿 수정 |
-| 에이전트 모델 | 각 스크립트의 `--model` 플래그 | `opus` / `sonnet` / `haiku` 변경 |
 | 에이전트 지시 | `--append-system-prompt` 플래그 | 역할별 system prompt 조정 |
-| plan 디렉토리 경로 | `lib/common.sh` PLAN_DIR | 기본값 `docs/plan` 변경 |
+
+## 실전 적용 이력
+
+### 칸반 보드 풀스택 과제 (2026-03)
+
+| 항목 | 수치 |
+|------|------|
+| 총 Unit | 18 (초기 9 + 보정 3 + 개선 6) |
+| Worker 호출 | ~25회 (재시도 포함) |
+| Verifier 호출 | ~18회 |
+| Finalizer 호출 | ~18회 |
+| 수동 개입 | 3회 (DnD 버그, worktree 파일 복사) |
+| 하네스 수정 | ~15회 (실행 중 발견한 문제 즉시 반영) |
+
+**발견된 문제와 대응:**
+
+| 문제 | 횟수 | 대응 |
+|------|------|------|
+| Worktree가 stale origin에서 분기 | 3회 | push 후 해결, BASE_REF 로직 개선 필요 |
+| plan.md sed 패턴 불일치 | 5회+ | `^` 앵커 추가, `UNIT_NUM` 도입 |
+| Verifier stuck | 3회 | pkill 후 skip, 원인 미확정 |
+| Finalizer rebase 충돌 | 3회 | 수동 파일 복사로 우회 |
+| Worker 결과물이 worktree에 없음 | 1회 | `--add-dir` + system prompt에 경로 명시 |
+
+## 알려진 한계 (v1)
+
+- **병렬 실행 불가** — plan.md sed 충돌, git worktree add lock 충돌
+- **실시간 로깅 불가** — `claude -p` 백그라운드 실행 시 진행 상황 불가시
+- **Verifier 간헐적 stuck** — 원인 미확정, pkill로 우회
+- **plan.md 상태 오염** — sed 패턴 불일치, Verifier fail 후 수동 복원 필요
+- **오케스트레이터(LLM)가 상태 관리에 개입** — 컨텍스트 압축 시 상태 망각
+
+## v2 로드맵
+
+→ `PLAN.md` 참조. Python + Claude Agent SDK 기반 재작성 계획.

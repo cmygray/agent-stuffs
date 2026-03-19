@@ -49,10 +49,10 @@ PROMPT
 
 RESULT=$(claude -p "${VERIFY_PROMPT}
 
-$(cat "$UNIT_FILE")" \
+$(sed '/^## Result/,$d' "$UNIT_FILE")" \
   --json-schema "$(cat "$SCHEMA")" \
   --output-format json \
-  --model sonnet \
+  --model "$VERIFIER_MODEL" \
   --dangerously-skip-permissions \
   ${ADD_DIR_FLAG} \
   --append-system-prompt "You are a verifier agent. Run checks and report results only. Do not modify any code.")

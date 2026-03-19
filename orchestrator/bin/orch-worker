@@ -28,17 +28,17 @@ update_plan_status "$UNIT_NUM" "[ ]" "[~]"
 # 2. 선행 Unit의 decisions를 수집하여 컨텍스트로 전달
 PRIOR_DECISIONS=$(collect_prior_decisions)
 
-# 3. Worker 실행 전 worktree 목록 스냅샷
-WORKTREES_BEFORE=$(snapshot_worktrees)
+# 3. Worktree 수동 생성 — remote default branch에서 분기, 없으면 로컬 HEAD fallback
+create_worktree "$UNIT_ID"
 
-# 4. Worker 실행
+# 4. Worker 실행 (worktree 디렉토리를 --add-dir로 전달)
 RESULT=$(claude -p "$(cat "$UNIT_FILE")${PRIOR_DECISIONS}" \
   --json-schema "$(cat "$SCHEMA")" \
   --output-format json \
-  --model opus \
-  --worktree \
+  --model "$WORKER_MODEL" \
+  --add-dir "$WORKTREE_PATH" \
   --dangerously-skip-permissions \
-  --append-system-prompt "You are a worker agent. Implement exactly what the spec says. Do not ask questions. Read all Context Files before starting.")
+  --append-system-prompt "You are a worker agent. Implement exactly what the spec says. Do not ask questions. Read all Context Files before starting. Work inside the worktree directory: ${WORKTREE_PATH}")
 
 # 5. structured_output 추출
 RESULT_JSON=$(extract_structured_output "$RESULT" \
@@ -46,21 +46,10 @@ RESULT_JSON=$(extract_structured_output "$RESULT" \
 
 STATUS=$(echo "$RESULT_JSON" | jq -r '.status')
 
-# 6. 새로 생성된 worktree 경로 탐지
-WORKTREE_PATH=$(detect_new_worktree "$WORKTREES_BEFORE")
-
-if [ -n "$WORKTREE_PATH" ]; then
-  WORKTREE_PATH=$(cd "$WORKTREE_PATH" && pwd)
-  save_worktree_path "$UNIT_ID" "$WORKTREE_PATH"
-  echo "Worktree: ${WORKTREE_PATH}"
-else
-  echo "WARNING: No new worktree detected"
-fi
-
-# 7. decisions를 축적 로그에 기록
+# 6. decisions를 축적 로그에 기록
 record_decisions "$UNIT_ID" "$RESULT_JSON"
 
-# 8. plan.md 상태 업데이트
+# 7. plan.md 상태 업데이트
 if [ "$STATUS" = "done" ]; then
   update_plan_status "$UNIT_NUM" "[~]" "[x]"
   MARKER="[x]"
@@ -69,13 +58,13 @@ else
   MARKER="[!]"
 fi
 
-# 9. unit 파일에 결과 기록
+# 8. unit 파일에 결과 기록
 append_result_section "$UNIT_FILE" "Worker Output" "$RESULT_JSON"
 
-# 10. 요약 출력
+# 9. 요약 출력
 echo "=== ${UNIT_ID}: ${MARKER} (status: ${STATUS}) ==="
 echo "$RESULT_JSON" | jq '.'
 
-# 11. session ID 출력
+# 10. session ID 출력
 SESSION_ID=$(extract_session_id "$RESULT")
 echo "Session: ${SESSION_ID}"

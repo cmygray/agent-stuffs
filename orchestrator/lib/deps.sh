@@ -26,6 +26,20 @@ check_deps() {
     return 0
   fi
 
+  local unit_num
+  unit_num=$(unit_num "$unit_id")
+
+  if [ "$deps" = "all" ]; then
+    # "all"이면 현재 unit 제외 모든 unit이 [x]인지 확인
+    local not_done
+    not_done=$(grep "^| [0-9]" "$PLAN_FILE" | grep -v "| ${unit_num} |" | grep -v '\[x\]' | head -1 || true)
+    if [ -n "$not_done" ]; then
+      echo "ERROR: Not all units completed. Blocked by: ${not_done}"
+      exit 1
+    fi
+    return 0
+  fi
+
   IFS=',' read -ra DEP_LIST <<< "$deps"
   for dep in "${DEP_LIST[@]}"; do
     dep=$(echo "$dep" | tr -d ' ' | sed 's/Unit//')
@@ -63,4 +77,15 @@ record_decisions() {
       echo "- ${line}" >> "${STATE_DIR}/decisions.log"
     done
   fi
+}
+
+# 특정 unit의 decisions 읽기 (커밋 메시지용)
+# Returns: decisions 텍스트 (없으면 빈 문자열)
+read_unit_decisions() {
+  local unit_id="$1"
+  if [ ! -f "${STATE_DIR}/decisions.log" ]; then
+    return
+  fi
+  # unit_id 헤더부터 다음 헤더(또는 EOF)까지 추출
+  sed -n "/^## ${unit_id}$/,/^## /{ /^## ${unit_id}$/d; /^## /d; p; }" "${STATE_DIR}/decisions.log"
 }

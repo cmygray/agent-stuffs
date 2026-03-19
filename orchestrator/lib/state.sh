@@ -26,24 +26,34 @@ remove_worktree_state() {
   rm -f "${STATE_DIR}/${unit_id}.worktree"
 }
 
-# Worker 실행 전후 worktree 스냅샷 비교로 새 worktree 탐지
-# Usage:
-#   before=$(snapshot_worktrees)
-#   ... run worker ...
-#   detect_new_worktree "$before"
-snapshot_worktrees() {
-  ls -d .claude/worktrees/*/ 2>/dev/null | sort || true
-}
+# Worktree를 수동 생성
+# remote default branch에서 분기, 없으면 로컬 HEAD fallback
+# Usage: create_worktree <unit_id>
+# Sets: WORKTREE_PATH (absolute path)
+create_worktree() {
+  local unit_id="$1"
+  local worktree_dir="${WORKTREE_BASE}/${unit_id}-$(date +%s)"
+  local branch_name="${unit_id}-branch"
 
-detect_new_worktree() {
-  local before="$1"
-  local after
-  after=$(snapshot_worktrees)
-  if [ -n "$after" ]; then
-    if [ -n "$before" ]; then
-      comm -13 <(echo "$before") <(echo "$after") | head -1
-    else
-      echo "$after" | head -1
-    fi
+  local base_ref
+  base_ref=$(git rev-parse --verify origin/main 2>/dev/null \
+    || git rev-parse --verify origin/master 2>/dev/null \
+    || git rev-parse HEAD)
+
+  local base_label
+  if git rev-parse --verify origin/main >/dev/null 2>&1; then
+    base_label="origin/main"
+  elif git rev-parse --verify origin/master >/dev/null 2>&1; then
+    base_label="origin/master"
+  else
+    base_label="local HEAD"
   fi
+  echo "Base ref: ${base_ref} (${base_label})"
+
+  mkdir -p "$WORKTREE_BASE"
+  git worktree add -b "$branch_name" "$worktree_dir" "$base_ref"
+
+  WORKTREE_PATH=$(cd "$worktree_dir" && pwd)
+  save_worktree_path "$unit_id" "$WORKTREE_PATH"
+  echo "Worktree: ${WORKTREE_PATH}"
 }

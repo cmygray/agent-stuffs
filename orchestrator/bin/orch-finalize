@@ -10,6 +10,7 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 source "${SCRIPT_DIR}/../lib/common.sh"
+source "${SCRIPT_DIR}/../lib/deps.sh"
 source "${SCRIPT_DIR}/../lib/state.sh"
 
 UNIT_FILE="$1"
@@ -32,7 +33,16 @@ fi
 BRANCH=$(git -C "$WORKTREE_PATH" branch --show-current)
 echo "Branch: ${BRANCH}"
 
-# 2. worktree에서 커밋 (Finalizer 에이전트)
+# 2. decisions 수집 (커밋 메시지에 포함)
+UNIT_DECISIONS=$(read_unit_decisions "$UNIT_ID")
+DECISIONS_BLOCK=""
+if [ -n "$UNIT_DECISIONS" ]; then
+  DECISIONS_BLOCK="
+   ## Decisions
+$(echo "$UNIT_DECISIONS" | sed 's/^/   /')"
+fi
+
+# 3. worktree에서 커밋 (Finalizer 에이전트)
 FINALIZE_PROMPT=$(cat << PROMPT
 You are a finalizer agent. Do the following:
 
@@ -40,18 +50,13 @@ Work inside the worktree directory: ${WORKTREE_PATH}
 cd to that directory before running any git commands.
 
 1. Check git status for uncommitted changes
-2. Stage all relevant changes (do not stage docs/plan/ files)
+2. Stage all relevant changes (do not stage .orch/ files)
 3. Create a commit with this message format:
    feat: ${UNIT_TITLE}
+${DECISIONS_BLOCK}
 
    ## Changes
    - (summarize the actual changes based on git diff --staged)
-
-   ## AI Context
-   - Agent: Claude (opus)
-   - Role: Worker agent implementing ${UNIT_ID}
-   - Key prompts:
-     - "Implement exactly what the spec says"
 
    Co-Authored-By: Claude Opus <noreply@anthropic.com>
 
@@ -63,7 +68,7 @@ PROMPT
 RESULT=$(claude -p "$FINALIZE_PROMPT" \
   --json-schema "$(cat "$SCHEMA")" \
   --output-format json \
-  --model sonnet \
+  --model "$FINALIZER_MODEL" \
   --dangerously-skip-permissions \
   --append-system-prompt "You are a finalizer agent. Commit only. Do not merge, do not switch branches, do not modify source code.")
 
@@ -80,22 +85,29 @@ if [ "$COMMIT_STATUS" != "done" ]; then
   exit 1
 fi
 
-# 3. rebase onto main
-echo "Rebasing ${BRANCH} onto main..."
-if ! git -C "$WORKTREE_PATH" rebase main; then
+# 4. rebase 전 .orch/ 선제 삭제 (worker가 생성했을 수 있음)
+rm -rf "$WORKTREE_PATH/.orch/"
+
+# 5. 현재 브랜치 확인 (main, master, 또는 feature 브랜치)
+TARGET_BRANCH=$(git branch --show-current)
+echo "Target branch: ${TARGET_BRANCH}"
+
+# 6. rebase onto target branch
+echo "Rebasing ${BRANCH} onto ${TARGET_BRANCH}..."
+if ! git -C "$WORKTREE_PATH" rebase "${TARGET_BRANCH}"; then
   echo "ERROR: Rebase failed"
   git -C "$WORKTREE_PATH" rebase --abort 2>/dev/null
   exit 1
 fi
 
-# 4. ff-only merge
-echo "Merging ${BRANCH} into main (ff-only)..."
+# 7. ff-only merge
+echo "Merging ${BRANCH} into ${TARGET_BRANCH} (ff-only)..."
 if ! git merge "${BRANCH}" --ff-only; then
   echo "ERROR: ff-only merge failed"
   exit 1
 fi
 
-# 5. merge 검증
+# 8. merge 검증
 COMMIT_HASH=$(echo "$RESULT_JSON" | jq -r '.commit_hash')
 if git log --oneline | grep -q "$(echo "$COMMIT_HASH" | cut -c1-7)" 2>/dev/null || git log --oneline -1 | grep -q "feat: ${UNIT_TITLE}"; then
   echo "Merge verified."
@@ -104,28 +116,28 @@ else
   exit 1
 fi
 
-# 6. worktree + 브랜치 정리
+# 9. worktree + 브랜치 정리
 echo "Cleaning up worktree and branch..."
 git worktree remove "$WORKTREE_PATH" --force 2>/dev/null || rm -rf "$WORKTREE_PATH"
 git worktree prune
 git branch -d "${BRANCH}" 2>/dev/null || true
 
-# 7. 결과 기록
+# 10. 결과 기록
 FINAL_HASH=$(git log --oneline -1 | cut -d' ' -f1)
 RESULT_JSON=$(echo "$RESULT_JSON" | jq --arg h "$FINAL_HASH" --arg b "${BRANCH}" '.commit_hash = $h | .branch_merged = $b')
 append_result_section "$UNIT_FILE" "Finalizer Output" "$RESULT_JSON"
 
-# 8. state 파일 정리
+# 11. state 파일 정리
 remove_worktree_state "$UNIT_ID"
 
-# 9. plan 문서 변경 커밋
-git add docs/plan/plan.md docs/plan/units/ 2>/dev/null
+# 12. plan 문서 변경 커밋
+git add "${PLAN_DIR}/" 2>/dev/null
 if ! git diff --cached --quiet 2>/dev/null; then
   git commit -m "docs: plan update — ${UNIT_ID} completed"
   echo "Plan docs committed."
 fi
 
-# 10. 완료
+# 13. 완료
 echo "=== ${UNIT_ID} finalize: done ==="
 echo "$RESULT_JSON" | jq '.'
 

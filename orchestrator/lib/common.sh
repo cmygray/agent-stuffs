@@ -6,13 +6,25 @@ set -euo pipefail
 # 오케스트레이터 루트 디렉토리 (이 파일 기준)
 ORCH_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
+# ── 설정 (환경변수로 오버라이드 가능) ──────────────────────────
+
 # 프로젝트 루트 디렉토리 (오케스트레이터 사용 프로젝트)
 PROJECT_ROOT="${PROJECT_ROOT:-$(pwd)}"
 
-# plan 디렉토리 (프로젝트 내)
-PLAN_DIR="${PROJECT_ROOT}/docs/plan"
-STATE_DIR="${PLAN_DIR}/.state"
-PLAN_FILE="${PLAN_DIR}/plan.md"
+# plan 디렉토리 (gitignore 대상)
+PLAN_DIR="${PLAN_DIR:-${PROJECT_ROOT}/.orch/plan}"
+STATE_DIR="${STATE_DIR:-${PLAN_DIR}/.state}"
+PLAN_FILE="${PLAN_FILE:-${PLAN_DIR}/plan.md}"
+
+# worktree 베이스 디렉토리
+WORKTREE_BASE="${WORKTREE_BASE:-.claude/worktrees}"
+
+# 에이전트 모델
+WORKER_MODEL="${WORKER_MODEL:-opus}"
+VERIFIER_MODEL="${VERIFIER_MODEL:-sonnet}"
+FINALIZER_MODEL="${FINALIZER_MODEL:-sonnet}"
+
+# ────────────────────────────────────────────────────────────
 
 # 타임스탬프
 timestamp() {

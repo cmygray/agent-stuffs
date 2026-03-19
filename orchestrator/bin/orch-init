@@ -1,0 +1,49 @@
+#!/bin/bash
+set -euo pipefail
+
+# Usage: orch-init [plan-dir]
+# 현재 프로젝트에 오케스트레이터 plan 구조를 생성합니다.
+#
+# 생성되는 구조:
+#   .orch/plan/
+#   ├── plan.md
+#   ├── units/
+#   └── .state/
+
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+ORCH_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
+TEMPLATES="${ORCH_ROOT}/templates"
+
+PLAN_DIR="${1:-.orch/plan}"
+
+if [ -f "${PLAN_DIR}/plan.md" ]; then
+  echo "ERROR: ${PLAN_DIR}/plan.md already exists. Aborting."
+  exit 1
+fi
+
+mkdir -p "${PLAN_DIR}/units" "${PLAN_DIR}/.state"
+
+cp "${TEMPLATES}/plan.md.tmpl" "${PLAN_DIR}/plan.md"
+
+# .gitignore에 .orch/ 추가 (중복 방지)
+ORCH_BASE=$(echo "$PLAN_DIR" | cut -d'/' -f1)
+if [ -f .gitignore ]; then
+  if ! grep -qx "${ORCH_BASE}/" .gitignore 2>/dev/null; then
+    echo "${ORCH_BASE}/" >> .gitignore
+    echo "Added ${ORCH_BASE}/ to .gitignore"
+  fi
+else
+  echo "${ORCH_BASE}/" > .gitignore
+  echo "Created .gitignore with ${ORCH_BASE}/"
+fi
+
+echo "=== orch-init ==="
+echo "Created:"
+echo "  ${PLAN_DIR}/plan.md"
+echo "  ${PLAN_DIR}/units/"
+echo "  ${PLAN_DIR}/.state/"
+echo ""
+echo "Next steps:"
+echo "  1. Edit ${PLAN_DIR}/plan.md — dependency graph and TOC"
+echo "  2. Create unit files in ${PLAN_DIR}/units/ (template: ${TEMPLATES}/unit.md.tmpl)"
+echo "  3. Run: orch-worker ${PLAN_DIR}/units/unit-01.md"

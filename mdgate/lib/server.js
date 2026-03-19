@@ -45,23 +45,30 @@ const MIME_TYPES = {
 
 function resolveDoc(urlPath) {
   const entries = loadRegistry();
-  // Match /<slug>/... or /<slug>
-  const match = urlPath.match(/^\/([^/]+)(\/.*)?$/);
-  if (!match) return null;
-  const slug = match[1];
-  const rest = match[2] || "/";
-  const entry = entries.find((e) => e.slug === slug);
-  if (!entry) return null;
-  return { entry, rest };
+  // Match longest slug first (supports multi-segment slugs like "project/readme")
+  const sorted = [...entries].sort((a, b) => b.slug.length - a.slug.length);
+  for (const entry of sorted) {
+    const prefix = "/" + entry.slug;
+    if (urlPath === prefix || urlPath.startsWith(prefix + "/")) {
+      const rest = urlPath.slice(prefix.length) || "/";
+      return { entry, rest };
+    }
+  }
+  return null;
 }
 
 export function startServer(filePath, port, hosts = [], opts = {}) {
-  const { reviewMode = false } = opts;
+  const { reviewMode = false, daemon = false } = opts;
 
-  // Register first document
-  const absFile = resolve(filePath);
-  const baseDir = dirname(absFile);
-  const slug = addEntry(absFile, baseDir);
+  let slug = null;
+  let absFile = null;
+  let baseDir = null;
+
+  if (filePath) {
+    absFile = resolve(filePath);
+    baseDir = dirname(absFile);
+    slug = addEntry(absFile, baseDir);
+  }
 
   let reviewResolve = null;
   const reviewPromise = reviewMode
@@ -155,12 +162,6 @@ export function startServer(filePath, port, hosts = [], opts = {}) {
     // Index page
     if (urlPath === "/") {
       const entries = loadRegistry();
-      if (entries.length === 1) {
-        // Single doc: redirect to it
-        res.writeHead(302, { Location: `/${entries[0].slug}/` });
-        res.end();
-        return;
-      }
       res.writeHead(200, { "Content-Type": "text/html; charset=utf-8", "Cache-Control": "no-cache" });
       res.end(indexTemplate(entries));
       return;
@@ -238,25 +239,44 @@ export function startServer(filePath, port, hosts = [], opts = {}) {
     res.end("Forbidden file type");
   });
 
+  server.on("error", (err) => {
+    if (err.code === "EADDRINUSE") {
+      console.error(`Error: Port ${port} is already in use. Is mdgate already running?`);
+      console.error(`  Try: mdgate --stop   then retry`);
+      process.exit(1);
+    }
+    throw err;
+  });
+
   server.listen(port, "0.0.0.0", () => {
     mkdirSync(STATE_DIR, { recursive: true });
     writeFileSync(resolve(STATE_DIR, "server.pid"), String(process.pid));
 
-    const log = reviewMode ? console.error.bind(console) : console.log.bind(console);
-    log(`mdgate serving: ${filePath}`);
-    log(`  Slug:       ${slug}`);
-    log(`  Local:      http://localhost:${port}/${slug}/`);
-    if (hosts.length) {
-      for (const h of hosts) {
-        log(`  Tailscale:  http://${h}:${port}/${slug}/`);
+    if (daemon) {
+      console.log(`mdgate daemon started on port ${port}`);
+      console.log(`  Local:      http://localhost:${port}/`);
+      if (hosts.length) {
+        for (const h of hosts) {
+          console.log(`  Tailscale:  http://${h}:${port}/`);
+        }
       }
+      console.log(`\nWaiting for documents... (use: mdgate <file.md>)`);
+    } else {
+      const log = reviewMode ? console.error.bind(console) : console.log.bind(console);
+      log(`mdgate serving: ${filePath}`);
+      log(`  Slug:       ${slug}`);
+      log(`  Local:      http://localhost:${port}/${slug}/`);
+      if (hosts.length) {
+        for (const h of hosts) {
+          log(`  Tailscale:  http://${h}:${port}/${slug}/`);
+        }
+      }
+      log(reviewMode ? `\nWaiting for review submission...` : `\nCtrl+C to stop.`);
     }
-    log(reviewMode ? `\nWaiting for review submission...` : `\nCtrl+C to stop.`);
   });
 
   function cleanup() {
     try { unlinkSync(resolve(STATE_DIR, "server.pid")); } catch {}
-    removeEntry(slug);
     server.close();
     process.exit(0);
   }

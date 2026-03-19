@@ -880,22 +880,35 @@ function initSubmitReview() {
   setInterval(check, 3000);
 })();
 </script>
+${finderScript()}
 </body>
 </html>`;
 }
 
 export function indexTemplate(entries) {
+  const homedir = process.env.HOME || "";
+
   const items = entries.map((e) => {
-    const dir = escapeHtml(e.baseDir);
     const slug = escapeHtml(e.slug);
     const file = escapeHtml(e.entryFile);
+    const shortPath = homedir ? e.baseDir.replace(homedir, "~") : e.baseDir;
+    const dir = escapeHtml(shortPath);
     const time = new Date(e.registeredAt).toLocaleString("ko-KR", { month:"short", day:"numeric", hour:"2-digit", minute:"2-digit" });
-    return `<a href="/${slug}/" class="doc-card">
-      <div class="doc-title">${file}</div>
-      <div class="doc-dir">${dir}</div>
-      <div class="doc-time">${time}</div>
-    </a>`;
+    return `<div class="doc-card" data-slug="${slug}">
+      <a href="/${slug}/" class="doc-link">
+        <div class="doc-title">${file}</div>
+        <div class="doc-meta">
+          <span class="doc-slug">/${slug}/</span>
+          <span class="doc-time">${time}</span>
+        </div>
+        <div class="doc-dir">${dir}</div>
+      </a>
+      <button class="doc-remove" title="Remove" data-action="remove" data-target="${slug}">&times;</button>
+    </div>`;
   }).join("\n");
+
+  const emptyMsg = entries.length > 0 ? "" :
+    '<div class="empty">No documents registered.<br>Run <code>mdgate &lt;file.md&gt;</code> to add one.</div>';
 
   return `<!DOCTYPE html>
 <html lang="en">
@@ -908,7 +921,7 @@ export function indexTemplate(entries) {
   :root {
     --bg: #1a1b26; --fg: #c0caf5; --fg-dim: #565f89;
     --accent: #7aa2f7; --border: #292e42; --code-bg: #24283b;
-    --link: #7dcfff;
+    --link: #7dcfff; --danger: #f7768e;
   }
   html { font-size: 16px; }
   body {
@@ -921,28 +934,239 @@ export function indexTemplate(entries) {
   .subtitle { color: var(--fg-dim); font-size: 0.85rem; margin-bottom: 1.5em; }
   .doc-list { display: flex; flex-direction: column; gap: 0.5em; }
   .doc-card {
-    display: block; padding: 0.8em 1em;
+    position: relative;
     background: var(--code-bg); border: 1px solid var(--border);
-    border-radius: 6px; text-decoration: none;
-    transition: border-color 0.15s;
+    border-radius: 6px;
+    transition: border-color 0.15s, opacity 0.3s;
   }
   .doc-card:hover { border-color: var(--accent); }
+  .doc-link {
+    display: block; padding: 0.8em 2.5em 0.8em 1em;
+    text-decoration: none; color: inherit;
+  }
   .doc-title { color: var(--link); font-size: 1rem; font-weight: 600; }
-  .doc-dir { color: var(--fg-dim); font-size: 0.8rem; margin-top: 0.2em; }
-  .doc-time { color: var(--fg-dim); font-size: 0.75rem; margin-top: 0.2em; }
+  .doc-meta {
+    display: flex; gap: 1em; align-items: center;
+    margin-top: 0.25em; font-size: 0.78rem;
+  }
+  .doc-slug {
+    color: var(--fg-dim);
+    font-family: "SF Mono", "Fira Code", Menlo, monospace;
+    font-size: 0.75rem;
+  }
+  .doc-dir { color: var(--fg-dim); font-size: 0.75rem; margin-top: 0.15em; }
+  .doc-time { color: var(--fg-dim); }
+  .doc-remove {
+    position: absolute; top: 0.6em; right: 0.6em;
+    width: 1.6em; height: 1.6em;
+    display: flex; align-items: center; justify-content: center;
+    background: none; border: 1px solid transparent;
+    border-radius: 4px; color: var(--fg-dim);
+    font-size: 1rem; cursor: pointer;
+    opacity: 0; transition: opacity 0.15s;
+  }
+  .doc-card:hover .doc-remove { opacity: 1; }
+  .doc-remove:hover { color: var(--danger); border-color: var(--danger); }
+  .doc-remove:active { background: var(--danger); color: var(--bg); }
+  .doc-card.removing { opacity: 0.4; pointer-events: none; }
   .empty { color: var(--fg-dim); font-size: 0.9rem; padding: 2em 0; text-align: center; }
 </style>
 </head>
 <body>
 <div class="container">
   <h1>mdgate</h1>
-  <div class="subtitle">${entries.length} document${entries.length !== 1 ? "s" : ""} registered</div>
-  <div class="doc-list">
-    ${entries.length > 0 ? items : '<div class="empty">No documents registered. Run mdgate &lt;file.md&gt; to add one.</div>'}
+  <div class="subtitle" id="subtitle">${entries.length} document${entries.length !== 1 ? "s" : ""} registered</div>
+  <div class="doc-list" id="docList">
+    ${items}${emptyMsg}
   </div>
 </div>
+<script>
+document.getElementById("docList").addEventListener("click", async (e) => {
+  const btn = e.target.closest("[data-action=remove]");
+  if (!btn) return;
+  e.preventDefault();
+  const slug = btn.dataset.target;
+  const card = btn.closest(".doc-card");
+  if (!card) return;
+
+  card.classList.add("removing");
+  try {
+    const res = await fetch("/_api/unregister", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ slug }),
+    });
+    if (!res.ok) throw new Error();
+    card.addEventListener("transitionend", () => {
+      card.remove();
+      const n = document.querySelectorAll(".doc-card").length;
+      document.getElementById("subtitle").textContent =
+        n + " document" + (n !== 1 ? "s" : "") + " registered";
+    }, { once: true });
+  } catch {
+    card.classList.remove("removing");
+  }
+});
+</script>
+${finderScript()}
 </body>
 </html>`;
+}
+
+export function finderScript() {
+  return `
+<div id="finder" style="display:none; position:fixed; inset:0; z-index:1000; background:rgba(0,0,0,0.5); backdrop-filter:blur(4px); -webkit-backdrop-filter:blur(4px);">
+  <div style="max-width:32rem; margin:20vh auto 0; background:var(--bg,#1a1b26); border:1px solid var(--border,#292e42); border-radius:10px; overflow:hidden; box-shadow:0 8px 32px rgba(0,0,0,0.4);">
+    <input id="finderInput" type="text" placeholder="Find document..." style="
+      width:100%; padding:0.8em 1em; background:transparent; color:var(--fg,#c0caf5);
+      border:none; border-bottom:1px solid var(--border,#292e42); font-size:1rem;
+      font-family:inherit; outline:none;
+    ">
+    <div id="finderResults" style="max-height:40vh; overflow-y:auto;"></div>
+    <div style="padding:0.4em 1em; border-top:1px solid var(--border,#292e42); font-size:0.7rem; color:var(--fg-dim,#565f89); display:flex; gap:1.5em;">
+      <span>Enter copy url</span>
+      <span>Esc close</span>
+    </div>
+  </div>
+</div>
+<style>
+  .finder-item {
+    padding:0.6em 1em; cursor:pointer; display:flex; flex-direction:column;
+    border-left:3px solid transparent;
+  }
+  .finder-item:hover, .finder-item.active {
+    background:var(--code-bg,#24283b); border-left-color:var(--accent,#7aa2f7);
+  }
+  .finder-item-name { color:var(--link,#7dcfff); font-weight:600; font-size:0.9rem; }
+  .finder-item-path { color:var(--fg-dim,#565f89); font-size:0.75rem; margin-top:0.1em; }
+  .finder-toast {
+    position:fixed; bottom:1.5em; left:50%; transform:translateX(-50%);
+    background:var(--code-bg,#24283b); color:var(--fg,#c0caf5);
+    border:1px solid var(--border,#292e42); border-radius:6px;
+    padding:0.5em 1.2em; font-size:0.85rem;
+    opacity:0; transition:opacity 0.2s; pointer-events:none; z-index:1001;
+  }
+  .finder-toast.show { opacity:1; }
+</style>
+<div class="finder-toast" id="finderToast"></div>
+<script>
+(function() {
+  const finder = document.getElementById("finder");
+  const input = document.getElementById("finderInput");
+  const results = document.getElementById("finderResults");
+  const toast = document.getElementById("finderToast");
+  let docs = [];
+  let activeIdx = 0;
+  let toastTimer;
+
+  function showToast(msg) {
+    toast.textContent = msg;
+    toast.classList.add("show");
+    clearTimeout(toastTimer);
+    toastTimer = setTimeout(() => toast.classList.remove("show"), 1500);
+  }
+
+  // Simple fuzzy match: all chars of query appear in order in target
+  function fuzzy(query, target) {
+    const q = query.toLowerCase();
+    const t = target.toLowerCase();
+    let qi = 0;
+    for (let ti = 0; ti < t.length && qi < q.length; ti++) {
+      if (t[ti] === q[qi]) qi++;
+    }
+    return qi === q.length;
+  }
+
+  function getFiltered() {
+    const q = input.value.trim();
+    if (!q) return docs;
+    return docs.filter(d => fuzzy(q, d.entryFile) || fuzzy(q, d.slug) || fuzzy(q, d.baseDir));
+  }
+
+  function render() {
+    const filtered = getFiltered();
+    results.textContent = "";
+    filtered.forEach((d, i) => {
+      const item = document.createElement("div");
+      item.className = "finder-item" + (i === activeIdx ? " active" : "");
+      const name = document.createElement("div");
+      name.className = "finder-item-name";
+      name.textContent = d.entryFile;
+      const path = document.createElement("div");
+      path.className = "finder-item-path";
+      path.textContent = "/" + d.slug + "/";
+      item.appendChild(name);
+      item.appendChild(path);
+      item.addEventListener("click", () => { activeIdx = i; copyActive(); });
+      item.addEventListener("mouseenter", () => { activeIdx = i; render(); });
+      results.appendChild(item);
+    });
+    if (filtered.length === 0) {
+      const empty = document.createElement("div");
+      empty.style.cssText = "padding:1em; color:var(--fg-dim,#565f89); text-align:center; font-size:0.85rem;";
+      empty.textContent = "No matches";
+      results.appendChild(empty);
+    }
+  }
+
+  function copyActive() {
+    const filtered = getFiltered();
+    if (activeIdx < 0 || activeIdx >= filtered.length) return;
+    const url = location.origin + "/" + filtered[activeIdx].slug + "/";
+    navigator.clipboard.writeText(url).then(() => {
+      close();
+      showToast("Copied: " + url);
+    });
+  }
+
+  async function open() {
+    try {
+      const res = await fetch("/_api/registry");
+      docs = await res.json();
+    } catch { docs = []; }
+    activeIdx = 0;
+    input.value = "";
+    finder.style.display = "";
+    render();
+    input.focus();
+  }
+
+  function close() {
+    finder.style.display = "none";
+  }
+
+  // Cmd+K to open
+  document.addEventListener("keydown", (e) => {
+    if ((e.metaKey || e.ctrlKey) && e.key === "k") {
+      e.preventDefault();
+      finder.style.display === "none" ? open() : close();
+    }
+  });
+
+  // Finder input handling
+  input.addEventListener("input", () => { activeIdx = 0; render(); });
+  input.addEventListener("keydown", (e) => {
+    const filtered = getFiltered();
+    if (e.key === "ArrowDown" || (e.key === "n" && e.ctrlKey)) {
+      e.preventDefault();
+      activeIdx = (activeIdx + 1) % Math.max(filtered.length, 1);
+      render();
+      return;
+    }
+    if (e.key === "ArrowUp" || (e.key === "p" && e.ctrlKey)) {
+      e.preventDefault();
+      activeIdx = (activeIdx - 1 + filtered.length) % Math.max(filtered.length, 1);
+      render();
+      return;
+    }
+    if (e.key === "Enter") { e.preventDefault(); copyActive(); return; }
+    if (e.key === "Escape") { e.preventDefault(); close(); return; }
+  });
+
+  // Click backdrop to close
+  finder.addEventListener("click", (e) => { if (e.target === finder) close(); });
+})();
+</script>`;
 }
 
 function escapeHtml(s) {

@@ -1,4 +1,4 @@
-import { resolve, basename } from "node:path";
+import { resolve, basename, dirname } from "node:path";
 import { readFileSync, writeFileSync, mkdirSync } from "node:fs";
 
 const STATE_DIR = resolve(process.env.HOME || "/tmp", ".mdgate");
@@ -17,20 +17,26 @@ export function saveRegistry(entries) {
   writeFileSync(REGISTRY_FILE, JSON.stringify(entries, null, 2) + "\n");
 }
 
+function makeSlug(filePath) {
+  const parent = basename(dirname(filePath));
+  const name = basename(filePath, ".md");
+  return `${parent}/${name}`;
+}
+
 export function addEntry(filePath, baseDir) {
   const entries = loadRegistry();
-  const name = basename(filePath, ".md");
+  const absPath = resolve(filePath);
 
   // Check if already registered (same absolute path)
-  const absPath = resolve(filePath);
   const existing = entries.find((e) => e.filePath === absPath);
   if (existing) return existing.slug;
 
-  // Generate unique slug
-  let slug = name;
+  // Generate unique slug: parentDir/name
+  const base = makeSlug(absPath);
+  let slug = base;
   let i = 2;
   while (entries.some((e) => e.slug === slug)) {
-    slug = `${name}-${i++}`;
+    slug = `${base}-${i++}`;
   }
 
   entries.push({
@@ -50,8 +56,4 @@ export function removeEntry(slug) {
   if (filtered.length === entries.length) return false;
   saveRegistry(filtered);
   return true;
-}
-
-export function clearRegistry() {
-  saveRegistry([]);
 }

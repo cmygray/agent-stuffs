@@ -25,6 +25,7 @@ const marked = new Marked(
   markedHighlight({
     langPrefix: "hljs language-",
     highlight(code, lang) {
+      if (lang === "mermaid") return code;
       if (lang && hljs.getLanguage(lang)) {
         return hljs.highlight(code, { language: lang }).value;
       }

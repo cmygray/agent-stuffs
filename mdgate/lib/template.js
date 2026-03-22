@@ -145,6 +145,8 @@ export function htmlTemplate(title, contentHtml, mdPath, opts = {}) {
 
   .hljs { background: transparent; }
 
+  .mermaid { text-align: center; margin: 1.5em 0; }
+
   /* Comment UI */
   .comment-btn {
     display: inline-block;
@@ -879,6 +881,18 @@ function initSubmitReview() {
   if (saved) { window.scrollTo(0, parseInt(saved, 10)); sessionStorage.removeItem("mdgate-scroll"); }
   setInterval(check, 3000);
 })();
+</script>
+<script type="module">
+import mermaid from "https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs";
+mermaid.initialize({ startOnLoad: false, theme: "dark" });
+document.querySelectorAll("code.language-mermaid").forEach((code) => {
+  const pre = code.parentElement;
+  const div = document.createElement("div");
+  div.className = "mermaid";
+  div.textContent = code.textContent;
+  pre.replaceWith(div);
+});
+await mermaid.run({ nodes: document.querySelectorAll(".mermaid") });
 </script>
 ${finderScript()}
 </body>

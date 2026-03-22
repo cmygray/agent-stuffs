@@ -42,7 +42,16 @@ const MIME_TYPES = {
   ".txt": "text/plain",
   ".yaml": "text/yaml",
   ".yml": "text/yaml",
+  ".png": "image/png",
+  ".jpg": "image/jpeg",
+  ".jpeg": "image/jpeg",
+  ".gif": "image/gif",
+  ".svg": "image/svg+xml",
+  ".webp": "image/webp",
+  ".ico": "image/x-icon",
 };
+
+const TEXT_MIMES = new Set(["text/html", "application/json", "text/plain", "text/yaml", "image/svg+xml"]);
 
 function resolveDoc(urlPath) {
   const entries = loadRegistry();
@@ -230,9 +239,15 @@ export function startServer(filePath, port, hosts = [], opts = {}) {
 
     const mime = MIME_TYPES[ext];
     if (mime) {
-      const content = readFileSync(absPath, "utf8");
-      res.writeHead(200, { "Content-Type": `${mime}; charset=utf-8`, "Cache-Control": "no-cache" });
-      res.end(content);
+      if (TEXT_MIMES.has(mime)) {
+        const content = readFileSync(absPath, "utf8");
+        res.writeHead(200, { "Content-Type": `${mime}; charset=utf-8`, "Cache-Control": "no-cache" });
+        res.end(content);
+      } else {
+        const content = readFileSync(absPath);
+        res.writeHead(200, { "Content-Type": mime, "Cache-Control": "no-cache" });
+        res.end(content);
+      }
       return;
     }
 

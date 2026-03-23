@@ -954,13 +954,15 @@ function initSubmitReview() {
       // Safe: replacing with same-origin server-rendered content
       contentView.replaceChildren(...newView.childNodes);
 
-      // Highlight changed/new blocks
-      [...contentView.children].forEach((el, i) => {
-        if (!oldHtmlMap[i] || oldHtmlMap[i] !== el.outerHTML) {
-          el.classList.add("diff-changed", "diff-changed-persist");
-          setTimeout(() => el.classList.remove("diff-changed"), 3000);
-        }
-      });
+      // Highlight changed/new blocks (review mode only)
+      if (REVIEW_MODE) {
+        [...contentView.children].forEach((el, i) => {
+          if (!oldHtmlMap[i] || oldHtmlMap[i] !== el.outerHTML) {
+            el.classList.add("diff-changed", "diff-changed-persist");
+            setTimeout(() => el.classList.remove("diff-changed"), 3000);
+          }
+        });
+      }
 
       // Rebind
       attachCommentButtons();

@@ -69,8 +69,11 @@ def main():
         print(f"Error: File not found: {file_path}", file=sys.stderr)
         sys.exit(1)
     elif is_review:
-        from .server import start_server
-        comments = start_server(file_path, port, config["hosts"], review_mode=True)
+        if _is_server_running(port):
+            comments = _review_via_running_server(file_path, port, config["hosts"])
+        else:
+            from .server import start_server
+            comments = start_server(file_path, port, config["hosts"], review_mode=True)
         print(json.dumps(comments, indent=2))
         sys.exit(0)
     else:
@@ -110,6 +113,33 @@ def _register_with_running_server(file_path: str, port: int) -> str:
     with urlopen(req, timeout=5) as resp:
         data = json.loads(resp.read())
         return data["slug"]
+
+
+def _review_via_running_server(file_path: str, port: int, hosts: list[str]) -> list:
+    import time
+    slug = _register_with_running_server(file_path, port)
+    body = json.dumps({"slug": slug}).encode()
+    req = Request(f"http://127.0.0.1:{port}/_api/start-review", data=body,
+                  headers={"Content-Type": "application/json"}, method="POST")
+    urlopen(req, timeout=5)
+
+    print(f"mdgate serving: {file_path}", file=sys.stderr)
+    print(f"  Slug:       {slug}", file=sys.stderr)
+    print(f"  Local:      http://localhost:{port}/{slug}/", file=sys.stderr)
+    for h in hosts:
+        print(f"  Tailscale:  http://{h}:{port}/{slug}/", file=sys.stderr)
+    print(f"\nWaiting for review submission...", file=sys.stderr)
+
+    while True:
+        time.sleep(1)
+        try:
+            poll_req = Request(f"http://127.0.0.1:{port}/_api/poll-review?slug={slug}")
+            with urlopen(poll_req, timeout=5) as resp:
+                data = json.loads(resp.read())
+                if data.get("submitted"):
+                    return data["comments"]
+        except Exception:
+            pass
 
 
 def _cmd_help(config: dict):

@@ -16,7 +16,7 @@ from pygments import highlight as pygments_highlight
 from pygments.formatters import HtmlFormatter
 from pygments.lexers import get_lexer_by_name, guess_lexer, TextLexer
 
-from .comments import load_comments, add_comment, update_comment, delete_comment, clear_comments
+from .comments import load_comments, add_comment, update_comment, delete_comment, clear_comments, resolve_comment
 from .registry import load_registry, add_entry, remove_entry, save_registry
 from .template import html_template, index_template
 
@@ -153,6 +153,39 @@ class _Handler(BaseHTTPRequestHandler):
             self._send_json(200, load_registry())
             return
 
+        if url_path.startswith("/_api/poll-review"):
+            parsed = urlparse(self.path)
+            qs = parse_qs(parsed.query)
+            s = qs.get("slug", [None])[0]
+            if not s:
+                self._send_json(400, {"error": "slug required"})
+                return
+            if s in self.server._review_results:
+                comments = self.server._review_results.pop(s)
+                self.server._review_slugs.discard(s)
+                self.server._review_events.pop(s, None)
+                self._send_json(200, {"submitted": True, "comments": comments})
+            else:
+                self._send_json(200, {"submitted": False})
+            return
+
+        if url_path.startswith("/_api/pending-comments"):
+            parsed = urlparse(self.path)
+            qs = parse_qs(parsed.query)
+            s = qs.get("slug", [None])[0]
+            if not s:
+                self._send_json(400, {"error": "slug required"})
+                return
+            entry = next((e for e in load_registry() if e["slug"] == s), None)
+            if not entry:
+                self._send_json(404, {"error": "slug not found"})
+                return
+            md_abs = str(Path(entry["baseDir"]) / normpath(entry["entryFile"]))
+            all_comments = load_comments(md_abs)
+            pending = [c for c in all_comments if not c.get("resolved")]
+            self._send_json(200, {"pending": pending, "total": len(all_comments), "resolved": len(all_comments) - len(pending)})
+            return
+
         if url_path == "/":
             html = index_template(load_registry())
             self._send(200, "text/html; charset=utf-8", html.encode())
@@ -204,7 +237,8 @@ class _Handler(BaseHTTPRequestHandler):
         ext = p.suffix.lower()
 
         if ext == ".md":
-            html = _render_file(abs_path, req_file, entry["slug"], self.server._review_mode)
+            is_review = self.server._review_mode or entry["slug"] in self.server._review_slugs
+            html = _render_file(abs_path, req_file, entry["slug"], is_review)
             self._send(200, "text/html; charset=utf-8", html.encode())
             return
 
@@ -242,12 +276,42 @@ class _Handler(BaseHTTPRequestHandler):
             self._send_json(200, {"ok": True})
             return
 
-        if url_path == "/_api/submit-review" and self.server._review_event:
-            md_abs = self.server._abs_file
-            comments = load_comments(md_abs)
+        if url_path == "/_api/start-review":
+            body = json.loads(self._read_body())
+            s = body.get("slug")
+            if not s:
+                self._send_json(400, {"error": "slug required"})
+                return
+            self.server._review_slugs.add(s)
+            self.server._review_events[s] = threading.Event()
             self._send_json(200, {"ok": True})
-            self.server._review_comments = comments
-            self.server._review_event.set()
+            return
+
+        if url_path == "/_api/submit-review":
+            raw = self._read_body()
+            body = json.loads(raw) if raw else {}
+            s = body.get("slug")
+            # Per-slug review (daemon mode)
+            if s and s in self.server._review_slugs:
+                entry = next((e for e in load_registry() if e["slug"] == s), None)
+                if entry:
+                    md_abs = str(Path(entry["baseDir"]) / normpath(entry["entryFile"]))
+                    comments = load_comments(md_abs)
+                    self.server._review_results[s] = comments
+                    evt = self.server._review_events.get(s)
+                    if evt:
+                        evt.set()
+                self._send_json(200, {"ok": True})
+                return
+            # Legacy single-file review
+            if self.server._review_event:
+                md_abs = self.server._abs_file
+                comments = load_comments(md_abs)
+                self._send_json(200, {"ok": True})
+                self.server._review_comments = comments
+                self.server._review_event.set()
+                return
+            self._send_json(400, {"error": "no active review"})
             return
 
         doc = _resolve_doc(url_path)
@@ -321,8 +385,19 @@ class _Handler(BaseHTTPRequestHandler):
                 return
             body = json.loads(self._read_body())
             cid = body.get("id")
+            if not cid:
+                self._send_json(400, {"error": "id required"})
+                return
+            # Resolve
+            if body.get("resolved") and not body.get("text"):
+                result = resolve_comment(md_abs, cid)
+                if result:
+                    self._send_json(200, result)
+                else:
+                    self._send_json(404, {"error": "not found"})
+                return
             text = (body.get("text") or "").strip()
-            if not cid or not text:
+            if not text:
                 self._send_json(400, {"error": "id and text required"})
                 return
             updated = update_comment(md_abs, cid, text)
@@ -374,6 +449,12 @@ class _MDGateServer(ThreadingHTTPServer):
     _review_event: threading.Event | None = None
     _review_comments: list | None = None
     _abs_file: str | None = None
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self._review_slugs: set = set()
+        self._review_results: dict = {}
+        self._review_events: dict = {}  # slug -> threading.Event
 
 
 def start_server(file_path: str | None, port: int, hosts: list[str] = (),

@@ -51,6 +51,17 @@ def clear_comments(md_abs_path: str):
     _comments_path(md_abs_path).write_text("[]\n")
 
 
+def resolve_comment(md_abs_path: str, comment_id: str) -> dict | None:
+    comments = load_comments(md_abs_path)
+    comment = next((c for c in comments if c["id"] == comment_id), None)
+    if not comment:
+        return None
+    comment["resolved"] = True
+    comment["resolvedAt"] = datetime.now(timezone.utc).isoformat()
+    _comments_path(md_abs_path).write_text(json.dumps(comments, indent=2) + "\n")
+    return comment
+
+
 def delete_comment(md_abs_path: str, comment_id: str) -> bool:
     comments = load_comments(md_abs_path)
     filtered = [c for c in comments if c["id"] != comment_id]

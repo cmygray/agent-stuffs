@@ -260,6 +260,55 @@ _PAGE_CSS = """\
   .comment-item .comment-edit-form textarea:focus { outline: 1px solid var(--accent); border-color: var(--accent); }
   .comment-edited { color: var(--fg-dim); font-size: 0.7rem; font-style: italic; }
 
+  .comment-resolve {
+    position: absolute;
+    top: 0.4em;
+    right: 3.5em;
+    background: none;
+    border: none;
+    color: var(--fg-dim);
+    cursor: pointer;
+    font-size: 0.8rem;
+    padding: 0.2em;
+  }
+  .comment-resolve:active { color: #9ece6a; }
+  .comment-item--resolved {
+    opacity: 0.4;
+    border-left-color: #9ece6a;
+  }
+  .comment-item--resolved .comment-resolve { color: #9ece6a; }
+  .review-item--resolved {
+    opacity: 0.4;
+    border-left-color: #9ece6a;
+  }
+  .review-item-resolve {
+    background: none;
+    border: 1px solid var(--border);
+    color: var(--fg-dim);
+    cursor: pointer;
+    font-size: 0.75rem;
+    padding: 0.2em 0.5em;
+    border-radius: 3px;
+  }
+  .review-item-resolve:active { color: #9ece6a; border-color: #9ece6a; }
+  .review-item--resolved .review-item-resolve { color: #9ece6a; border-color: #9ece6a; }
+
+  @keyframes diff-flash {
+    0% { background: rgba(158, 206, 106, 0.25); }
+    70% { background: rgba(158, 206, 106, 0.12); }
+    100% { background: transparent; }
+  }
+  .diff-changed {
+    animation: diff-flash 3s ease-out;
+    border-radius: 4px;
+  }
+  .diff-changed-persist {
+    border-left: 3px solid #9ece6a;
+    padding-left: 0.5em;
+    background: rgba(158, 206, 106, 0.06);
+    border-radius: 0 4px 4px 0;
+  }
+
   /* Toolbar */
   .toolbar {
     display: flex;
@@ -511,7 +560,7 @@ async function loadComments() {
 
 function renderComment(c) {
   const div = document.createElement("div");
-  div.className = "comment-item";
+  div.className = "comment-item" + (c.resolved ? " comment-item--resolved" : "");
 
   const textEl = document.createElement("div");
   textEl.className = "comment-text";
@@ -569,8 +618,24 @@ function renderComment(c) {
   editForm.appendChild(editTa);
   editForm.appendChild(editActions);
 
+  const resolveBtn = document.createElement("button");
+  resolveBtn.className = "comment-resolve";
+  resolveBtn.title = c.resolved ? "Resolved" : "Resolve";
+  resolveBtn.textContent = "\u2713";
+  if (!c.resolved) {
+    resolveBtn.addEventListener("click", async () => {
+      await fetch(COMMENTS_API, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ id: c.id, resolved: true }),
+      });
+      await loadComments();
+    });
+  }
+
   div.appendChild(textEl);
   div.appendChild(timeEl);
+  div.appendChild(resolveBtn);
   div.appendChild(editBtn);
   div.appendChild(delBtn);
   div.appendChild(editForm);
@@ -760,7 +825,10 @@ function renderReviewList() {
   const count = document.getElementById("reviewCount");
   if (!list) return;
   list.textContent = "";
-  count.textContent = allComments.length + " comments";
+  const pending = allComments.filter((c) => !c.resolved);
+  const resolved = allComments.filter((c) => c.resolved);
+  const sorted = [...pending, ...resolved];
+  count.textContent = pending.length + " pending / " + allComments.length + " total";
 
   if (allComments.length === 0) {
     const empty = document.createElement("div");
@@ -770,9 +838,9 @@ function renderReviewList() {
     return;
   }
 
-  allComments.forEach((c) => {
+  sorted.forEach((c) => {
     const item = document.createElement("div");
-    item.className = "review-item";
+    item.className = "review-item" + (c.resolved ? " review-item--resolved" : "");
 
     const sec = document.createElement("div");
     sec.className = "review-item-section";
@@ -793,7 +861,23 @@ function renderReviewList() {
     const d = new Date(c.ts);
     time.textContent = d.toLocaleDateString("ko-KR", { month:"short", day:"numeric", hour:"2-digit", minute:"2-digit" });
     if (c.editedAt) time.textContent += " (edited)";
+    if (c.resolvedAt) time.textContent += " \u2713";
     meta.appendChild(time);
+
+    if (!c.resolved) {
+      const resolveBtn = document.createElement("button");
+      resolveBtn.className = "review-item-resolve";
+      resolveBtn.textContent = "\u2713 Resolve";
+      resolveBtn.addEventListener("click", async () => {
+        await fetch(COMMENTS_API, {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ id: c.id, resolved: true }),
+        });
+        await loadComments();
+      });
+      meta.appendChild(resolveBtn);
+    }
 
     item.appendChild(sec);
     item.appendChild(text);
@@ -811,7 +895,7 @@ function initSubmitReview() {
     btn.disabled = true;
     status.textContent = "Submitting...";
     try {
-      await fetch("/_api/submit-review", { method: "POST" });
+      await fetch("/_api/submit-review", { method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify({slug: SLUG}) });
       status.textContent = "Review submitted! You can close this tab.";
       btn.textContent = "Done";
     } catch {
@@ -821,27 +905,118 @@ function initSubmitReview() {
   });
 }
 
-/* --- Auto Refresh --- */
+/* --- Auto Refresh with Diff Highlighting --- */
 (function autoRefresh() {
-  let lastHash = null;
+  let lastContent = null;
+  let lastCommentJson = JSON.stringify(allComments);
+
   async function check() {
     try {
       const res = await fetch(CONTENT_API);
       const { content } = await res.json();
-      const hash = content.length + ":" + content.slice(0, 200) + content.slice(-200);
-      if (lastHash === null) { lastHash = hash; return; }
-      if (hash !== lastHash) {
-        const scrollY = window.scrollY;
-        sessionStorage.setItem("mdgate-scroll", scrollY);
-        location.reload();
+      if (lastContent === null) { lastContent = content; return; }
+
+      // Refresh comments silently
+      const cres = await fetch(COMMENTS_API);
+      const comments = await cres.json();
+      const cJson = JSON.stringify(comments);
+      if (cJson !== lastCommentJson) {
+        lastCommentJson = cJson;
+        allComments = comments;
+        document.querySelectorAll(".comment-list").forEach((l) => { l.textContent = ""; });
+        document.querySelectorAll(".comment-btn").forEach((b) => b.classList.remove("has-comments"));
+        const bySec = {};
+        allComments.forEach((c) => { (bySec[c.section] = bySec[c.section] || []).push(c); });
+        for (const [section, items] of Object.entries(bySec)) {
+          const list = document.querySelector('.comment-list[data-section="' + CSS.escape(section) + '"]');
+          if (!list) continue;
+          const h = list.previousElementSibling;
+          if (h) { const btn = h.querySelector(".comment-btn"); if (btn) btn.classList.add("has-comments"); }
+          items.forEach((c) => list.appendChild(renderComment(c)));
+        }
+        renderReviewList();
       }
+
+      if (content === lastContent) return;
+      lastContent = content;
+
+      // Fetch re-rendered page for diff
+      const pageRes = await fetch(location.href);
+      const pageText = await pageRes.text();
+      const doc = new DOMParser().parseFromString(pageText, "text/html");
+      const newView = doc.getElementById("contentView");
+      if (!newView) return;
+
+      const contentView = document.getElementById("contentView");
+      const oldHtmlMap = [...contentView.children].map((el) => el.outerHTML);
+      const scrollY = window.scrollY;
+
+      // Safe: replacing with same-origin server-rendered content
+      contentView.replaceChildren(...newView.childNodes);
+
+      // Highlight changed/new blocks
+      [...contentView.children].forEach((el, i) => {
+        if (!oldHtmlMap[i] || oldHtmlMap[i] !== el.outerHTML) {
+          el.classList.add("diff-changed", "diff-changed-persist");
+          setTimeout(() => el.classList.remove("diff-changed"), 3000);
+        }
+      });
+
+      // Rebind
+      attachCommentButtons();
+      initCheckboxes();
+      await loadComments();
+      window.scrollTo(0, scrollY);
     } catch {}
   }
-  // Restore scroll position after reload
-  const saved = sessionStorage.getItem("mdgate-scroll");
-  if (saved) { window.scrollTo(0, parseInt(saved, 10)); sessionStorage.removeItem("mdgate-scroll"); }
   setInterval(check, 3000);
 })();
+
+function attachCommentButtons() {
+  document.querySelectorAll("#contentView h1, #contentView h2, #contentView h3").forEach((h) => {
+    if (h.querySelector(".comment-btn")) return;
+    const section = h.textContent.trim();
+    h.dataset.section = section;
+
+    const btn = document.createElement("span");
+    btn.className = "comment-btn";
+    btn.textContent = "+";
+    btn.setAttribute("role", "button");
+    btn.addEventListener("click", (e) => { e.preventDefault(); toggleForm(h); });
+    h.appendChild(btn);
+
+    let list = document.querySelector('.comment-list[data-section="' + CSS.escape(section) + '"]');
+    if (!list) {
+      list = document.createElement("div");
+      list.className = "comment-list";
+      list.dataset.section = section;
+      h.after(list);
+    }
+    let form = document.querySelector('.comment-form[data-section="' + CSS.escape(section) + '"]');
+    if (!form) {
+      form = document.createElement("div");
+      form.className = "comment-form";
+      form.dataset.section = section;
+      const ta = document.createElement("textarea");
+      ta.placeholder = "Comment... (Cmd+Enter to submit)";
+      ta.addEventListener("keydown", (e) => {
+        if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) { e.preventDefault(); submitComment(section, form); }
+      });
+      form.appendChild(ta);
+      const actions = document.createElement("div");
+      actions.className = "comment-form-actions";
+      const cb = document.createElement("button");
+      cb.className = "comment-cancel"; cb.type = "button"; cb.textContent = "Cancel";
+      cb.addEventListener("click", () => form.classList.remove("open"));
+      const sb = document.createElement("button");
+      sb.className = "comment-submit"; sb.type = "button"; sb.textContent = "Add";
+      sb.addEventListener("click", () => submitComment(section, form));
+      actions.appendChild(cb); actions.appendChild(sb);
+      form.appendChild(actions);
+      list.after(form);
+    }
+  });
+}
 """
 
 _MERMAID_JS = """\

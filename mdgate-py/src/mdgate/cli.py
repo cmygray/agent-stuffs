@@ -31,6 +31,10 @@ def main():
         _cmd_status()
         return
 
+    if "--setup-claude" in args:
+        _cmd_setup_claude()
+        return
+
     is_review = args[0] == "review"
     is_daemon = "--daemon" in args
     effective_args = args[1:] if is_review else args
@@ -152,6 +156,7 @@ Usage:
   mdgate --init <host1> [host2...]  Set Tailscale hostnames
   mdgate --stop                     Stop the running server
   mdgate --status                   Check server status
+  mdgate --setup-claude             Install Claude Code review skill
 
 Options:
   -p, --port <port>        Port to listen on (default: {config['port']})
@@ -186,6 +191,16 @@ def _cmd_stop():
             print("Server was not running (stale pid file removed)")
     else:
         print("No mdgate server is running")
+
+
+def _cmd_setup_claude():
+    import importlib.resources
+    source = importlib.resources.files("mdgate").joinpath("skill_review.md")
+    dest = Path.home() / ".claude" / "commands" / "mdgate-review.md"
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    dest.write_text(source.read_text(encoding="utf-8"), encoding="utf-8")
+    print(f"Installed: {dest}")
+    print("Usage: /mdgate-review <file.md>")
 
 
 def _cmd_status():

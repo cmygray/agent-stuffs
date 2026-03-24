@@ -128,7 +128,7 @@ _PAGE_CSS = """\
     margin: 2em 0;
   }
 
-  img { max-width: 100%; height: auto; border-radius: 4px; }
+  img { max-width: 100%; height: auto; border-radius: 4px; background: #ffffff; padding: 8px; }
 
   .meta {
     color: var(--fg-dim);

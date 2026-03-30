@@ -85,6 +85,11 @@ _PAGE_CSS = """\
     font-size: 0.9em;
   }
 
+  pre code.hljs {
+    background: transparent;
+    padding: 0;
+  }
+
   :not(pre) > code {
     background: var(--code-bg);
     padding: 0.15em 0.35em;
@@ -797,6 +802,42 @@ async function saveContent(ta, status) {
   }
 }
 
+/* --- Copy MD --- */
+document.getElementById("copyMdBtn").addEventListener("click", async () => {
+  const btn = document.getElementById("copyMdBtn");
+  try {
+    const res = await fetch(CONTENT_API);
+    const { content } = await res.json();
+    await navigator.clipboard.writeText(content);
+    btn.textContent = "Copied!";
+    setTimeout(() => { btn.textContent = "Copy"; }, 1500);
+  } catch {
+    btn.textContent = "Failed";
+    setTimeout(() => { btn.textContent = "Copy"; }, 1500);
+  }
+});
+
+/* --- Download MD --- */
+document.getElementById("downloadMdBtn").addEventListener("click", async () => {
+  const btn = document.getElementById("downloadMdBtn");
+  try {
+    const res = await fetch(CONTENT_API);
+    const { content } = await res.json();
+    const blob = new Blob([content], { type: "text/markdown" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = MD_PATH.split("/").pop() || "document.md";
+    a.click();
+    URL.revokeObjectURL(url);
+    btn.textContent = "Done!";
+    setTimeout(() => { btn.textContent = "Download"; }, 1500);
+  } catch {
+    btn.textContent = "Failed";
+    setTimeout(() => { btn.textContent = "Download"; }, 1500);
+  }
+});
+
 /* --- Review Panel --- */
 function initReviewPanel() {
   const toggle = document.getElementById("reviewToggle");
@@ -1021,6 +1062,15 @@ function attachCommentButtons() {
 }
 """
 
+_HIGHLIGHT_JS = """\
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/highlightjs/cdn-release@11/build/styles/nord.min.css">
+<script src="https://cdn.jsdelivr.net/gh/highlightjs/cdn-release@11/build/highlight.min.js"></script>
+<script>
+document.querySelectorAll('pre code').forEach((el) => {
+  if (!el.classList.contains('language-mermaid')) hljs.highlightElement(el);
+});
+</script>"""
+
 _MERMAID_JS = """\
 <script type="module">
 import mermaid from "https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs";
@@ -1217,6 +1267,8 @@ def html_template(title: str, content_html: str, md_path: str, *, review_mode: b
   <div class="meta">{_escape_html(title)}</div>
   <div class="toolbar">
     <button class="toolbar-btn" id="editToggle">Edit</button>
+    <button class="toolbar-btn" id="copyMdBtn">Copy</button>
+    <button class="toolbar-btn" id="downloadMdBtn">Download</button>
     <button class="toolbar-btn" id="reviewToggle">Comments</button>
   </div>
   <div class="review-panel" id="reviewPanel">
@@ -1243,6 +1295,7 @@ def html_template(title: str, content_html: str, md_path: str, *, review_mode: b
 <script>
 {page_js}
 </script>
+{_HIGHLIGHT_JS}
 {_MERMAID_JS}
 {_FINDER_SCRIPT}
 </body>

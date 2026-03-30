@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import atexit
+import html as _html
 import ipaddress
 import json
 import signal
@@ -15,6 +16,7 @@ import mistune
 from pygments import highlight as pygments_highlight
 from pygments.formatters import HtmlFormatter
 from pygments.lexers import get_lexer_by_name, guess_lexer, TextLexer
+from pygments.lexers.special import OutputLexer
 
 from .comments import load_comments, add_comment, update_comment, delete_comment, clear_comments, resolve_comment
 from .registry import load_registry, add_entry, remove_entry, save_registry
@@ -23,7 +25,7 @@ from .template import html_template, index_template
 STATE_DIR = Path.home() / ".mdgate"
 
 _TAILSCALE_NET = ipaddress.ip_network("100.64.0.0/10")
-_FORMATTER = HtmlFormatter(noclasses=True, style="monokai")
+_FORMATTER = HtmlFormatter(noclasses=True, style="nord")
 
 MIME_TYPES = {
     ".html": "text/html",
@@ -57,14 +59,16 @@ def _is_tailscale_or_local(addr: str) -> bool:
 class _HighlightRenderer(mistune.HTMLRenderer):
     def block_code(self, code: str, info: str | None = None, **attrs):
         lang = (info or "").split()[0] if info else ""
+        escaped = _html.escape(code)
         if lang == "mermaid":
-            escaped = mistune.html(code)
             return f'<pre><code class="language-mermaid">{escaped}</code></pre>\n'
         if lang:
             try:
                 lexer = get_lexer_by_name(lang, stripall=True)
+                if isinstance(lexer, (TextLexer, OutputLexer)):
+                    return f'<pre><code>{escaped}</code></pre>\n'
             except Exception:
-                lexer = TextLexer()
+                return f'<pre><code>{escaped}</code></pre>\n'
         else:
             try:
                 lexer = guess_lexer(code)

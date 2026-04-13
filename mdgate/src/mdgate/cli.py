@@ -41,8 +41,7 @@ def main():
 
     port = config["port"]
     file_path = None
-    share_name = None
-    share_enabled = False
+    tunnel_enabled = False
 
     i = 0
     while i < len(effective_args):
@@ -51,11 +50,8 @@ def main():
             port = int(effective_args[i + 1])
             i += 2
             continue
-        elif arg == "--share":
-            share_enabled = True
-        elif arg.startswith("--share="):
-            share_enabled = True
-            share_name = arg.removeprefix("--share=")
+        elif arg == "--tunnel":
+            tunnel_enabled = True
         elif not arg.startswith("-"):
             file_path = str(Path(arg).resolve())
         i += 1
@@ -63,9 +59,8 @@ def main():
     if is_daemon:
         from .server import start_server
         start_server(None, port, config["hosts"], daemon=True)
-        if share_enabled:
-            from .zrok import start_zrok
-            start_zrok(port, share_name)
+        if tunnel_enabled:
+            _start_tunnel(port, config)
     elif not file_path:
         print("Error: No markdown file specified", file=sys.stderr)
         sys.exit(1)
@@ -81,10 +76,10 @@ def main():
         print(json.dumps(comments, indent=2))
         sys.exit(0)
     else:
-        _cmd_serve(file_path, port, config["hosts"], share_enabled, share_name)
+        _cmd_serve(file_path, port, config["hosts"], tunnel_enabled, config)
 
 
-def _cmd_serve(file_path: str, port: int, hosts: list[str], share_enabled: bool, share_name: str | None):
+def _cmd_serve(file_path: str, port: int, hosts: list[str], tunnel_enabled: bool, config: dict):
     if _is_server_running(port):
         slug = _register_with_running_server(file_path, port)
         print(f"Registered: http://localhost:{port}/{slug}/")
@@ -92,9 +87,8 @@ def _cmd_serve(file_path: str, port: int, hosts: list[str], share_enabled: bool,
             print(f"            http://{h}:{port}/{slug}/")
     else:
         from .server import start_server
-        if share_enabled:
-            from .zrok import start_zrok
-            start_zrok(port, share_name)
+        if tunnel_enabled:
+            _start_tunnel(port, config)
         start_server(file_path, port, hosts)
 
 
@@ -146,6 +140,15 @@ def _review_via_running_server(file_path: str, port: int, hosts: list[str]) -> l
             pass
 
 
+def _start_tunnel(port: int, config: dict):
+    hostname = config.get("tunnel", {}).get("hostname")
+    if not hostname:
+        print("Error: tunnel.hostname required in ~/.mdgate/config.json", file=sys.stderr)
+        sys.exit(1)
+    from .tunnel import start_tunnel
+    start_tunnel(port, hostname)
+
+
 def _cmd_help(config: dict):
     print(f"""mdgate — Serve markdown files as mobile-friendly web pages
 
@@ -160,7 +163,7 @@ Usage:
 
 Options:
   -p, --port <port>        Port to listen on (default: {config['port']})
-  --share[=name]           Expose via zrok (optional fixed name)
+  --tunnel                 Expose via cloudflared tunnel (configure in config.json)
   -h, --help               Show this help
 
 Documents persist across server restarts.

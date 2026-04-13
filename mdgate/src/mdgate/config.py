@@ -4,7 +4,7 @@ from pathlib import Path
 CONFIG_DIR = Path.home() / ".mdgate"
 CONFIG_FILE = CONFIG_DIR / "config.json"
 
-DEFAULTS = {"port": 9483, "hosts": []}
+DEFAULTS = {"port": 9483, "hosts": [], "tunnel": {}}
 
 
 def load_config() -> dict:

@@ -449,6 +449,8 @@ class _Handler(BaseHTTPRequestHandler):
 
 
 class _MDGateServer(ThreadingHTTPServer):
+    allow_reuse_address = True
+
     _review_mode: bool = False
     _review_event: threading.Event | None = None
     _review_comments: list | None = None

@@ -1,0 +1,22 @@
+[project]
+name = "zlqhem"
+version = "0.1.0"
+description = "Terminal bilingual input — type Korean and English on a single QWERTY keyboard"
+requires-python = ">=3.11"
+license = "ISC"
+dependencies = []
+
+[project.scripts]
+zlqhem = "zlqhem.cli:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/zlqhem"]
+include = ["src/zlqhem/data/*.txt"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "auto"

@@ -51,6 +51,17 @@ class TestScoreClassification:
         assert lang == "en"
         assert text == "Python"
 
+    def test_tense_consonant_korean(self):
+        # R=ㄲ, T=ㅆ — shift keys for Korean tense consonants
+        text, _, lang = score("Rhc")
+        assert lang == "kr"
+        assert text == "꽃"
+
+    def test_ssang_jamo_korean(self):
+        text, _, lang = score("dlT")
+        assert lang == "kr"
+        assert text == "있"
+
     def test_passthrough_numbers(self):
         text, _, lang = score("123")
         assert lang == "pass"

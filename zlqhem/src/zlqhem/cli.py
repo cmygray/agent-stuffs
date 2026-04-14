@@ -32,11 +32,21 @@ def main():
     convert_p.add_argument("text", nargs="?", help="Text to convert")
     convert_p.add_argument("-d", "--debug", action="store_true", help="Show scoring details")
 
+    # wrap subcommand
+    wrap_p = sub.add_parser("wrap", help="Wrap a command with bilingual input")
+    wrap_p.add_argument("argv", nargs=argparse.REMAINDER, help="Command to wrap (after --)")
+
     args = parser.parse_args()
 
     if args.command == "daemon":
         from zlqhem.daemon import start
         start()
+    elif args.command == "wrap":
+        from zlqhem.pty_proxy import run_proxy
+        argv = args.argv
+        if argv and argv[0] == "--":
+            argv = argv[1:]
+        run_proxy(argv)
     elif args.command == "convert":
         text = args.text
         if text is None:

@@ -51,12 +51,13 @@ def score(word: str) -> tuple[str, float, str]:
     if any(ch in word for ch in "/._-@#$%&*+=~`<>{}[]|\\:;!?"):
         return word, 1.0, "pass"
 
-    # Gate 2: uppercase signal
-    has_upper = any(ch.isupper() for ch in word)
-    upper_bonus = 5.0 if has_upper else 0.0
+    # No uppercase bonus — all uppercase letters map to Korean jamo
+    # (R=ㄲ, E=ㄸ, Q=ㅃ, T=ㅆ, W=ㅉ, etc.), so uppercase is not
+    # a reliable English signal. Dictionary frequency handles it.
+    upper_bonus = 0.0
 
-    # Convert to Korean candidate
-    kr_candidate = qwerty_to_hangul(word.lower())
+    # Convert to Korean candidate (preserve original case for shift-jamo like R=ㄲ, T=ㅆ)
+    kr_candidate = qwerty_to_hangul(word)
     ratio = syllable_ratio(kr_candidate)
 
     # Gate 2: syllable ratio — if conversion produces mostly jamo, it's English

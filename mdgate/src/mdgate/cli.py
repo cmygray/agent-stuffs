@@ -89,7 +89,33 @@ def _cmd_serve(file_path: str, port: int, hosts: list[str], tunnel_enabled: bool
         from .server import start_server
         if tunnel_enabled:
             _start_tunnel(port, config)
-        start_server(file_path, port, hosts)
+        try:
+            start_server(file_path, port, hosts)
+        except OSError as e:
+            import errno
+            if e.errno != errno.EADDRINUSE:
+                raise
+            if _is_server_running(port):
+                slug = _register_with_running_server(file_path, port)
+                print(f"Registered: http://localhost:{port}/{slug}/")
+                for h in hosts:
+                    print(f"            http://{h}:{port}/{slug}/")
+            else:
+                _kill_port(port)
+                start_server(file_path, port, hosts)
+
+
+def _kill_port(port: int):
+    import subprocess
+    result = subprocess.run(
+        ["lsof", "-ti", f":{port}"],
+        capture_output=True, text=True
+    )
+    for pid in result.stdout.strip().splitlines():
+        try:
+            os.kill(int(pid), signal.SIGKILL)
+        except (ProcessLookupError, ValueError):
+            pass
 
 
 def _is_server_running(port: int) -> bool:

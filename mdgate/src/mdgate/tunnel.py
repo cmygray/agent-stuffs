@@ -64,13 +64,10 @@ def start_tunnel(port: int, hostname: str):
 
 def _ensure_tunnel(tunnel_name: str) -> str:
     """Return tunnel ID, creating the tunnel if it doesn't exist."""
-    # Check if tunnel already exists
-    result = subprocess.run(
-        ["cloudflared", "tunnel", "info", "-o", "json", tunnel_name],
-        capture_output=True, text=True,
-    )
-    if result.returncode == 0:
-        return json.loads(result.stdout)["id"]
+    # Check if tunnel already exists via tunnel list (info -o json is unreliable)
+    tid = _find_tunnel_id(tunnel_name)
+    if tid:
+        return tid
 
     # Create new tunnel
     result = subprocess.run(
@@ -81,9 +78,22 @@ def _ensure_tunnel(tunnel_name: str) -> str:
         print(f"  tunnel: create failed: {result.stderr.strip()}", file=sys.stderr)
         sys.exit(1)
 
-    # Re-fetch to get ID
+    tid = _find_tunnel_id(tunnel_name)
+    if not tid:
+        print("  tunnel: created but not found in list", file=sys.stderr)
+        sys.exit(1)
+    return tid
+
+
+def _find_tunnel_id(tunnel_name: str) -> str | None:
+    """Find tunnel ID by name from tunnel list."""
     result = subprocess.run(
-        ["cloudflared", "tunnel", "info", "-o", "json", tunnel_name],
+        ["cloudflared", "tunnel", "list", "-o", "json"],
         capture_output=True, text=True,
     )
-    return json.loads(result.stdout)["id"]
+    if result.returncode != 0:
+        return None
+    for t in json.loads(result.stdout):
+        if t["name"] == tunnel_name:
+            return t["id"]
+    return None

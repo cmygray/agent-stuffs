@@ -19,6 +19,7 @@ from pygments.lexers import get_lexer_by_name, guess_lexer, TextLexer
 from pygments.lexers.special import OutputLexer
 
 from .comments import load_comments, add_comment, update_comment, delete_comment, clear_comments, resolve_comment
+from .interactions import append_interaction, read_interactions
 from .registry import load_registry, add_entry, remove_entry, save_registry
 from .template import html_template, index_template
 
@@ -99,6 +100,31 @@ def _render_file(file_path: str, rel_path: str, slug: str, review_mode: bool = F
     content_html = _md(md)
     return html_template(basename(file_path), content_html, rel_path or basename(file_path),
                          review_mode=review_mode, slug=slug)
+
+
+def _interactions_js(slug: str, rel_path: str) -> str:
+    s = json.dumps(slug)
+    r = json.dumps(rel_path)
+    return f"""<script>
+(function() {{
+  const base = "/" + {s} + "/_api/interactions/" + {r};
+  window.mdgate = {{
+    record: async function(kind, payload) {{
+      const res = await fetch(base, {{
+        method: 'POST',
+        headers: {{'Content-Type': 'application/json'}},
+        body: JSON.stringify({{kind, payload}})
+      }});
+      return res.json();
+    }},
+    list: async function(since) {{
+      const url = since ? base + "?since=" + encodeURIComponent(since) : base;
+      const res = await fetch(url);
+      return res.json();
+    }}
+  }};
+}})();
+</script>"""
 
 
 class _Handler(BaseHTTPRequestHandler):
@@ -226,6 +252,18 @@ class _Handler(BaseHTTPRequestHandler):
             self._send_json(200, load_comments(md_abs))
             return
 
+        if rest.startswith("/_api/interactions/"):
+            rel = rest.removeprefix("/_api/interactions/")
+            abs_p = str(Path(entry["baseDir"]) / normpath(rel))
+            if not abs_p.startswith(entry["baseDir"]):
+                self._send_json(400, {"error": "invalid path"})
+                return
+            parsed = urlparse(self.path)
+            qs = parse_qs(parsed.query)
+            since = qs.get("since", [None])[0]
+            self._send_json(200, read_interactions(abs_p, since))
+            return
+
         req_file = entry["entryFile"] if rest == "/" else rest.lstrip("/")
         abs_path = str(Path(entry["baseDir"]) / normpath(req_file))
 
@@ -244,6 +282,16 @@ class _Handler(BaseHTTPRequestHandler):
             is_review = self.server._review_mode or entry["slug"] in self.server._review_slugs
             html = _render_file(abs_path, req_file, entry["slug"], is_review)
             self._send(200, "text/html; charset=utf-8", html.encode())
+            return
+
+        if ext == ".html":
+            content = p.read_text(encoding="utf-8")
+            helper = _interactions_js(entry["slug"], req_file)
+            if "</body>" in content:
+                content = content.replace("</body>", helper + "\n</body>", 1)
+            else:
+                content = content + "\n" + helper
+            self._send(200, "text/html; charset=utf-8", content.encode())
             return
 
         mime = MIME_TYPES.get(ext)
@@ -337,6 +385,22 @@ class _Handler(BaseHTTPRequestHandler):
                 self._send_json(400, {"error": "text required"})
                 return
             entry_data = add_comment(md_abs, section, text)
+            self._send_json(201, entry_data)
+            return
+
+        if rest.startswith("/_api/interactions/"):
+            rel = rest.removeprefix("/_api/interactions/")
+            abs_p = str(Path(entry["baseDir"]) / normpath(rel))
+            if not abs_p.startswith(entry["baseDir"]):
+                self._send_json(400, {"error": "invalid path"})
+                return
+            body = json.loads(self._read_body())
+            kind = body.get("kind", "")
+            payload = body.get("payload")
+            if not kind:
+                self._send_json(400, {"error": "kind required"})
+                return
+            entry_data = append_interaction(abs_p, kind, payload)
             self._send_json(201, entry_data)
             return
 
